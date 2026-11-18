@@ -3,8 +3,8 @@ import {mkdirSync,writeFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
 const target=process.env.TEST_SITE||'http://127.0.0.1:8765/';
 const out='.state/qa';mkdirSync(out,{recursive:true});const results=[];
-let proxy;
-if(!target.includes('127.0.0.1')&&process.env.HTTPS_PROXY){const u=new URL(process.env.HTTPS_PROXY);proxy={server:u.origin};if(u.username)proxy.username=decodeURIComponent(u.username);if(u.password)proxy.password=decodeURIComponent(u.password);}
+let proxy;const proxyUrl=process.env.TEST_PROXY||process.env.HTTPS_PROXY||process.env.https_proxy;
+if(!target.includes('127.0.0.1')&&proxyUrl){const u=new URL(proxyUrl);proxy={server:u.origin};if(u.username)proxy.username=decodeURIComponent(u.username);if(u.password)proxy.password=decodeURIComponent(u.password);}
 for(const [name,type,options,context]of [
   ['chrome-desktop',chromium,{channel:'chrome'},{viewport:{width:1440,height:1100}}],
   ['webkit-desktop',webkit,{}, {viewport:{width:1440,height:1100}}],

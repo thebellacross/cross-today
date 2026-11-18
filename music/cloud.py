@@ -7,6 +7,7 @@ import re
 import shutil
 import tempfile
 import time
+import traceback
 import zipfile
 from pathlib import Path
 import requests
@@ -15,6 +16,18 @@ from urllib3.util.retry import Retry
 from .common import ROOT, canonical, digest, file_hash, save_json
 from .library import import_one, ADAPTER_VERSION
 from .album import create_album
+
+class ServiceFailure(RuntimeError):
+    def __init__(self, service, method, status):
+        self.safe_detail=f'{service} {method} returned HTTP {status}'
+        super().__init__(self.safe_detail)
+
+def failure_diagnostic(error):
+    # Only code locations and our own fixed service labels enter public logs.
+    # Exception text may contain source paths, signed URLs or request headers.
+    locations=[f'{Path(f.filename).name}:{f.lineno}' for f in traceback.extract_tb(error.__traceback__) if Path(f.filename).parent.name=='music']
+    detail=error.safe_detail if isinstance(error,ServiceFailure) else type(error).__name__
+    return detail+' at '+' > '.join(locations)
 
 class Cloud:
     def __init__(self):
@@ -29,7 +42,7 @@ class Cloud:
         headers={'Authorization':'Bearer '+self.run_token}
         r=self.http.request(method,self.base+path,headers=headers,json=data if raw is None else None,data=raw,timeout=300)
         if missing and r.status_code==404:return None
-        if not r.ok:raise RuntimeError(f'Private service request failed ({r.status_code}); credentials and source paths omitted.')
+        if not r.ok:raise ServiceFailure('Private service',method,r.status_code)
         return r.json() if 'application/json' in r.headers.get('Content-Type','') else r.content
     def gh(self,path,method='GET',data=None,raw=None,missing=False,upload=False):
         base='https://uploads.github.com' if upload else 'https://api.github.com'
@@ -42,12 +55,12 @@ class Cloud:
         if raw is not None:headers['Content-Type']='application/octet-stream'
         r=self.http.request(method,base+path,headers=headers,json=data if raw is None else None,data=raw,timeout=300)
         if missing and r.status_code==404:return None
-        if not r.ok:raise RuntimeError(f'GitHub operation failed ({r.status_code}); previous current edition is preserved.')
+        if not r.ok:raise ServiceFailure('GitHub',method,r.status_code)
         return r.json() if r.content else None
     def release(self,job_id):return self.gh(f'/repos/{self.repo}/releases/tags/{job_id}',missing=True)
     def upload_assets(self,job_id,folder,album):
         release=self.release(job_id)
-        if not release:release=self.gh(f'/repos/{self.repo}/releases','POST',{'tag_name':job_id,'name':album['catalog']+' '+album['title'],'draft':True,'body':'Daily generated audio by CROSS. Original source recordings are private.'})
+        if not release:release=self.gh(f'/repos/{self.repo}/releases','POST',{'tag_name':job_id,'target_commitish':os.environ.get('GITHUB_SHA','main'),'name':album['catalog']+' '+album['title'],'draft':True,'body':'Daily generated audio by CROSS. Original source recordings are private.'})
         if not release['draft']:
             # A failure after making the Release public must never pair old media
             # with a new seed/manifest, including an explicit re-snapshot retry.
@@ -172,8 +185,11 @@ class Cloud:
             return
         folder=ROOT/'output'/job_id;cache=ROOT/'.cache/audio'
         snapshot=self.material_snapshot(job,cache)
+        print('Material snapshot validated; rendering album.',flush=True)
         album=create_album(snapshot,cache,folder,int(job['seed']),job['day'],job['number'],settings=job['config'],final_override=job['final_decision'])
+        print('Album files complete; uploading generated assets.',flush=True)
         self.upload_assets(job_id,folder,album)
+        print('Generated assets verified; retaining catalog cover.',flush=True)
         self.private_put(f'catalog/{job_id}/cover-small.jpg',folder/'cover-small.jpg')
         result=self.api(f'/internal/jobs/{job_id}/ready','POST',{'run':self.run,'album':album})
         if result['publish']:self.publish(job_id,{**job,'album':album})
@@ -257,7 +273,8 @@ def main():
         elif a.mode=='select':cloud.select(a.job)
         elif a.mode=='export':cloud.export(a.job)
         elif a.mode=='cleanup':cloud.cleanup()
-    except Exception:
+    except Exception as error:
+        print('Diagnostic: '+failure_diagnostic(error),flush=True)
         if a.mode in ('render','publish') and re.fullmatch(r'album-\d{4}-\d{2}-\d{2}',a.job):
             try:cloud.api(f'/internal/jobs/{a.job}/failed','POST',{'run':cloud.run})
             except Exception:pass

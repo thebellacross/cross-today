@@ -5,7 +5,16 @@ from pathlib import Path
 import pytest
 
 from music.album import download_archives
-from music.cloud import Cloud
+from music.cloud import Cloud, failure_diagnostic, ServiceFailure
+
+def test_public_failure_diagnostic_never_includes_private_error_text():
+    try:
+        raise ValueError('/private/recording.wav https://private.invalid?token=secret')
+    except ValueError as error:
+        result=failure_diagnostic(error)
+    assert 'ValueError' in result
+    assert not any(x in result for x in ('recording','private.invalid','secret'))
+    assert 'HTTP 403' in failure_diagnostic(ServiceFailure('GitHub','POST',403))
 
 
 def test_large_downloads_split_into_complete_independent_archives(tmp_path):

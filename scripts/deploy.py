@@ -12,6 +12,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 import requests
 from requests.adapters import HTTPAdapter
@@ -113,12 +114,18 @@ def main():
     if remote.returncode:run(['git','remote','add','origin','https://github.com/'+repo+'.git'])
     elif remote.stdout.strip()!='https://github.com/'+repo+'.git':raise RuntimeError('Existing Git remote differs from the authorized repository.')
     tag=run(['git','rev-parse','--verify',cfg['engine_ref']],check=False)
-    if not tag.returncode and tag.stdout.strip()!=run(['git','rev-parse','HEAD']).stdout.strip():raise RuntimeError('The pinned engine tag already points to an earlier implementation. Set a new engine_ref before publishing changes.')
+    if not tag.returncode and run(['git','diff','--name-only',cfg['engine_ref'],'HEAD','--','music','requirements.txt','.github/workflows/daily.yml','web/assets/artist/bellacross.jpg']).stdout.strip():raise RuntimeError('Rendering inputs changed. Set a new engine_ref before publishing changes.')
     if tag.returncode:run(['git','tag',cfg['engine_ref']])
     helper='!'+shlex.quote(gh)+' auth git-credential'
     run(['git','-c','credential.helper='+helper,'push','-u','origin','main']);run(['git','-c','credential.helper='+helper,'push','origin',cfg['engine_ref']])
-    upgrade=requests.post(worker+'/internal/config/upgrade',headers={'Authorization':'Bearer '+values['RUN_TOKEN']},json={},timeout=60)
-    if not upgrade.ok:raise RuntimeError('Worker version promotion failed; existing job snapshots remain unchanged.')
+    # Active SQLite objects can retain their earlier code for up to five minutes.
+    # Wait for the additive upgrade endpoint; do not reset active imports to speed deployment up.
+    deadline=time.monotonic()+360
+    while True:
+        upgrade=requests.post(worker+'/internal/config/upgrade',headers={'Authorization':'Bearer '+values['RUN_TOKEN']},json={},timeout=45)
+        if upgrade.ok:break
+        if upgrade.status_code not in (404,500,502,503,504) or time.monotonic()>=deadline:raise RuntimeError('Worker version promotion failed; existing job snapshots remain unchanged.')
+        print('Waiting for the active coordinator to adopt the deployed version.',flush=True);time.sleep(15)
     if api('/repos/'+repo+'/pages',allow=[404]) is None:api('/repos/'+repo+'/pages','POST',{'build_type':'workflow'})
     api('/repos/'+repo+'/actions/workflows/pages.yml/dispatches','POST',{'ref':'main'})
     save_json(ROOT/'.state/deployment.json',{'worker':worker,'admin':worker+'/admin','site':cfg['site_url'],'repository':'https://github.com/'+repo,'backend':'github-free','state':'Pages deployment dispatched; cloud audio validation remains required'})

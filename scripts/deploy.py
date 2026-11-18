@@ -24,7 +24,7 @@ from music.common import config,save_json
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--apply',action='store_true');args=parser.parse_args()
     cfg=config();repo=cfg['github_owner']+'/'+cfg['repository'];storage_repo=keychain('STORAGE_REPOSITORY') or cfg['github_owner']+'/'+cfg['repository'].removesuffix('-daily')+'-materials'
-    if repo!='thebellacross/bellacross-daily':raise SystemExit('Review the target repository before changing deployment ownership.')
+    if repo!='thebellacross/cross-today':raise SystemExit('Review the target repository before changing deployment ownership.')
     worker_cfg=json.loads((ROOT/'worker/wrangler.jsonc').read_text())
     if cfg.get('storage',{}).get('allow_paid') is not False or cfg['storage']['backend']!='github-free' or worker_cfg.get('r2_buckets') or worker_cfg['vars'].get('STORAGE_BACKEND')!='github-free':raise SystemExit('Free-plan guard: paid storage and R2 provisioning are not authorized.')
     gh=shutil.which('gh') or str(next((ROOT/'.tools/gh').glob('*/bin/gh')))
@@ -89,7 +89,7 @@ def main():
             if available.get('available'):
                 domain=cf_api('workers/subdomain','PUT',{'subdomain':name});break
         if not domain:raise RuntimeError('Choose an available free workers.dev subdomain in the official dashboard.')
-    subdomain=domain['subdomain'];worker=f'https://bellacross-daily.{subdomain}.workers.dev'
+    subdomain=domain['subdomain'];worker=f'https://cross-today.{subdomain}.workers.dev'
     cfg['worker_url']=worker;cfg['site_url']=f'https://{cfg["github_owner"]}.github.io/{cfg["repository"]}/'
     save_json(ROOT/'config.json',cfg);save_json(ROOT/'web/public-config.json',{'api':worker,'site_url':cfg['site_url']})
     values={name:keychain(name) or keychain(name,secrets.token_urlsafe(36)) for name in ('ADMIN_TOKEN','SESSION_SECRET','RUN_TOKEN')};sensitive.extend(values.values())

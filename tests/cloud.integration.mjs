@@ -6,7 +6,7 @@ import {githubFixture} from './github-fixture.mjs';
 const free=process.argv.includes('--free'),github=githubFixture();
 const fixture=JSON.parse(readFileSync('output/validation/album.json'));
 let dispatches=0;
-const mf=new Miniflare(convertV4MiniflareOptions({workers:[{name:"test",modules:true,scriptPath:'.state/worker.mjs',compatibilityDate:'2026-11-01',durableObjects:{COORDINATOR:{className:'Coordinator',useSQLite:true}},r2Buckets:['SOURCES','PERMANENT'],bindings:{STORAGE_BACKEND:free?'github-free':'r2',STORAGE_REPOSITORY:'thebellacross/private-fixture',ADMIN_TOKEN:'test-only-admin',SESSION_SECRET:'test-only-long-session-secret-1234567890',RUN_TOKEN:'test-only-run',GITHUB_TOKEN:'test-only-github',GITHUB_REPOSITORY:'thebellacross/bellacross-daily'},outboundService:async request=>{
+const mf=new Miniflare(convertV4MiniflareOptions({workers:[{name:"test",modules:true,scriptPath:'.state/worker.mjs',compatibilityDate:'2026-11-01',durableObjects:{COORDINATOR:{className:'Coordinator',useSQLite:true}},r2Buckets:['SOURCES','PERMANENT'],bindings:{STORAGE_BACKEND:free?'github-free':'r2',STORAGE_REPOSITORY:'thebellacross/private-fixture',ADMIN_TOKEN:'test-only-admin',SESSION_SECRET:'test-only-long-session-secret-1234567890',RUN_TOKEN:'test-only-run',GITHUB_TOKEN:'test-only-github',GITHUB_REPOSITORY:'thebellacross/cross-today'},outboundService:async request=>{
   if(free){const response=await github.fetch(request);dispatches=github.dispatches;return response;}
   if(request.url.includes('/dispatches')){dispatches++;return new Response(null,{status:204});}
   const name=new URL(request.url).pathname.split('/').at(-1);let data=readFileSync('output/validation/'+name);let status=200;const headers={'Content-Length':String(data.length)};

@@ -25,7 +25,7 @@ export class GitHubBucket {
   key(key) { return `object:${this.bucket}:${key}`; }
   async api(path, {method = 'GET', body, upload = false, missing = false} = {}) {
     if (method !== 'GET') await reserveWrite(this.c);
-    const headers = {'Authorization': `Bearer ${this.env.GITHUB_TOKEN}`, 'User-Agent': 'bellacross-daily', 'Accept': 'application/vnd.github+json'};
+    const headers = {'Authorization': `Bearer ${this.env.GITHUB_TOKEN}`, 'User-Agent': 'cross-today', 'Accept': 'application/vnd.github+json'};
     if (body !== undefined) headers['Content-Type'] = upload ? 'application/octet-stream' : 'application/json';
     const response = await fetch((upload ? 'https://uploads.github.com' : 'https://api.github.com') + path, {method, headers, body: body === undefined ? undefined : upload ? body : JSON.stringify(body)});
     if (missing && response.status === 404) return null;
@@ -150,7 +150,7 @@ export class GitHubBucket {
       let r;
       if (s.p.public) r = await fetch(`https://github.com/${s.p.repo}/releases/download/${s.p.tag}/${s.p.name}`, {headers: {Range: range}});
       else {
-        r = await fetch(`https://api.github.com/repos/${s.p.repo}/releases/assets/${s.p.id}`, {headers: {Authorization: `Bearer ${this.env.GITHUB_TOKEN}`, Accept: 'application/octet-stream', 'User-Agent': 'bellacross-daily', Range: range}, redirect: 'manual'});
+        r = await fetch(`https://api.github.com/repos/${s.p.repo}/releases/assets/${s.p.id}`, {headers: {Authorization: `Bearer ${this.env.GITHUB_TOKEN}`, Accept: 'application/octet-stream', 'User-Agent': 'cross-today', Range: range}, redirect: 'manual'});
         if ([301, 302, 307, 308].includes(r.status)) {
           const target = new URL(r.headers.get('Location'));
           if (target.protocol !== 'https:' || !['release-assets.githubusercontent.com', 'objects.githubusercontent.com'].includes(target.hostname)) throw new StorageError('Private asset redirect rejected.');

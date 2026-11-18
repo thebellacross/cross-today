@@ -89,7 +89,7 @@ export class Coordinator {
   async list(prefix){return [...(await this.store.list({prefix})).values()];}
   async dispatch(mode,jobId) {
     const job=await this.store.get('job:'+jobId);const ref=job?.config?.engine_ref||'main';
-    const r=await fetch(`https://api.github.com/repos/${this.env.GITHUB_REPOSITORY}/actions/workflows/daily.yml/dispatches`,{method:'POST',headers:{Authorization:`Bearer ${this.env.GITHUB_TOKEN}`,Accept:'application/vnd.github+json','User-Agent':'bellacross-daily','Content-Type':'application/json'},body:JSON.stringify({ref,inputs:{mode,job:jobId}})});
+    const r=await fetch(`https://api.github.com/repos/${this.env.GITHUB_REPOSITORY}/actions/workflows/daily.yml/dispatches`,{method:'POST',headers:{Authorization:`Bearer ${this.env.GITHUB_TOKEN}`,Accept:'application/vnd.github+json','User-Agent':'cross-today','Content-Type':'application/json'},body:JSON.stringify({ref,inputs:{mode,job:jobId}})});
     if(!r.ok)throw new Error('GitHub dispatch failed');
   }
   async ensure(day,publish=false,manual=false) {

@@ -30,7 +30,7 @@ export function githubFixture() {
       assert.ok(m); const [, repo, tag, name] = m;
       if (tag.startsWith('album-')) return send(request, readFileSync('output/validation/' + name));
       const asset = [...assets.values()].find(a => a.repo === repo && a.tag === tag && a.name === name);
-      assert.ok(asset, 'Saved public asset exists'); assert.equal(repo, 'thebellacross/bellacross-daily'); return send(request, asset.data);
+      assert.ok(asset, 'Saved public asset exists'); assert.equal(repo, 'thebellacross/cross-today'); return send(request, asset.data);
     }
     assert.equal(request.headers.get('Authorization'), 'Bearer test-only-github');
     if ((m = /^\/repos\/([^/]+\/[^/]+)$/.exec(u.pathname))) return json({private: m[1] === 'thebellacross/private-fixture' && mock.private});

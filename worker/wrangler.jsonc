@@ -1,13 +1,14 @@
 {
   "$schema": "../node_modules/wrangler/config-schema.json",
-  "name": "bellacross-daily",
+  "name": "cross-today",
   "main": "src/index.js",
   "compatibility_date": "2026-11-01",
   "workers_dev": true,
   "assets": {
     "directory": "../web",
     "binding": "ASSETS",
-    "run_worker_first": true
+    "run_worker_first": true,
+    "html_handling": "none"
   },
   "durable_objects": {
     "bindings": [
@@ -37,7 +38,7 @@
     }
   },
   "vars": {
-    "GITHUB_REPOSITORY": "thebellacross/bellacross-daily",
+    "GITHUB_REPOSITORY": "thebellacross/cross-today",
     "SITE_ORIGIN": "https://thebellacross.github.io",
     "STORAGE_BACKEND": "github-free"
   }

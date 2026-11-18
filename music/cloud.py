@@ -22,7 +22,7 @@ class Cloud:
         if not self.base.startswith('https://') and not self.base.startswith('http://127.0.0.1:'):raise ValueError('Worker URL must use HTTPS.')
         self.run_token=os.environ['RUN_TOKEN'];self.gh_token=os.environ['GH_TOKEN'];self.repo=os.environ['GITHUB_REPOSITORY']
         self.storage_repo=os.environ.get('STORAGE_REPOSITORY','');self.storage_token=os.environ.get('STORAGE_TOKEN','');self.next_write=0
-        if self.repo!='thebellacross/bellacross-daily':raise ValueError('Unexpected repository. Explicitly update the configured owner before deployment.')
+        if self.repo!='thebellacross/cross-today':raise ValueError('Unexpected repository. Explicitly update the configured owner before deployment.')
         self.run=os.environ.get('GITHUB_RUN_ID','local')+'-'+os.environ.get('GITHUB_RUN_ATTEMPT','1')
         self.http=requests.Session();self.http.mount('https://',HTTPAdapter(max_retries=Retry(total=4,backoff_factor=2,status_forcelist=[429,500,502,503,504],allowed_methods=frozenset(['GET','HEAD','PUT']))))
     def api(self,path,method='GET',data=None,raw=None,missing=False):
@@ -38,7 +38,7 @@ class Cloud:
             if private:self.api('/internal/storage/write','POST',{})
             else:
                 time.sleep(max(0,self.next_write-time.monotonic()));self.next_write=time.monotonic()+1.25
-        headers={'Authorization':'Bearer '+(self.storage_token if private else self.gh_token),'Accept':'application/vnd.github+json','User-Agent':'bellacross-daily'}
+        headers={'Authorization':'Bearer '+(self.storage_token if private else self.gh_token),'Accept':'application/vnd.github+json','User-Agent':'cross-today'}
         if raw is not None:headers['Content-Type']='application/octet-stream'
         r=self.http.request(method,base+path,headers=headers,json=data if raw is None else None,data=raw,timeout=300)
         if missing and r.status_code==404:return None
@@ -76,7 +76,7 @@ class Cloud:
             else:
                 # Older API responses may omit digest. Verify the generated asset,
                 # using the authenticated API endpoint (including draft Releases).
-                headers={'Authorization':'Bearer '+self.gh_token,'Accept':'application/octet-stream','User-Agent':'bellacross-daily'}
+                headers={'Authorization':'Bearer '+self.gh_token,'Accept':'application/octet-stream','User-Agent':'cross-today'}
                 with self.http.get(f'https://api.github.com/repos/{self.repo}/releases/assets/{a["id"]}',headers=headers,stream=True,timeout=300) as response:
                     if not response.ok:raise RuntimeError('Release verification failed.')
                     checksum=hashlib.sha256()

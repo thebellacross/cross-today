@@ -27,7 +27,7 @@ def test_large_downloads_split_into_complete_independent_archives(tmp_path):
 @pytest.mark.parametrize('remote', ['matching', 'missing', 'wrong_size', 'wrong_hash'])
 def test_retry_never_pairs_public_release_with_different_generated_audio(remote):
     cloud = Cloud.__new__(Cloud)
-    cloud.repo = 'thebellacross/bellacross-daily'
+    cloud.repo = 'thebellacross/cross-today'
     cloud.release = lambda job: {'id': 17, 'draft': False}
     checksum = hashlib.sha256(b'generated music').hexdigest()
     album = {'assets': {'01.mp3': {'bytes': 15, 'sha256': checksum}}}

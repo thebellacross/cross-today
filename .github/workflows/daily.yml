@@ -1,0 +1,42 @@
+name: Daily BELLACROSS
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        type: choice
+        options: [tick, render, publish, select, export, cleanup]
+        default: tick
+        required: true
+      job:
+        type: string
+        default: ''
+  schedule:
+    - cron: '7,37 * * * *'
+permissions:
+  contents: write
+concurrency:
+  group: bellacross-${{ inputs.mode == 'tick' && 'clock' || inputs.job || 'clock' }}
+  cancel-in-progress: false
+jobs:
+  run:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 115
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pinned rendering dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Run durable task
+        env:
+          WORKER_URL: ${{ vars.WORKER_URL }}
+          RUN_TOKEN: ${{ secrets.RUN_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          STORAGE_REPOSITORY: ${{ secrets.STORAGE_REPOSITORY }}
+          STORAGE_TOKEN: ${{ secrets.STORAGE_TOKEN }}
+          MODE: ${{ inputs.mode || 'tick' }}
+          JOB: ${{ inputs.job }}
+        run: python -m music.cloud "$MODE" --job "$JOB"

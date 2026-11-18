@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="Daily generative recordings by BELLACROSS, made from the artist's own sound materials."><title>BELLACROSS</title><link rel="icon" href="assets/artist/bellacross.jpg"><link rel="stylesheet" href="style.css"></head>
+<body>
+<div class="site">
+  <div class="mobile-profile"><img class="artist-avatar" alt="BELLACROSS"><strong class="artist-name">BELLACROSS</strong><a class="bandcamp-link">Follow</a></div>
+  <header class="banner"><img id="banner" alt=""><span>BELLACROSS</span></header>
+  <nav aria-label="Main navigation"><a href="./" class="active">music</a><a href="score.html">score</a><a href="catalog.html">catalogue</a><a class="bandcamp-link">Bandcamp</a></nav>
+  <div id="status" role="status" hidden></div>
+  <main class="album-panel">
+    <div class="music-columns">
+      <section class="information">
+        <h1 id="album-title">BELLACROSS</h1><p class="byline">by <a class="bandcamp-link artist-name">BELLACROSS</a></p>
+        <div class="player" id="main-player">
+          <button class="play" id="play" aria-label="Play" disabled><span></span></button>
+          <div class="transport"><div class="playing-label"><strong id="track-title">Loading album…</strong><span id="time">0:00 / 0:00</span></div><div class="seek-row"><input id="seek" type="range" min="0" max="1000" step="1" value="0" aria-label="Track playback position"><button id="previous" aria-label="Previous track">▮◀</button><button id="next" aria-label="Next track">▶▮</button></div></div>
+        </div>
+        <section class="digital"><h2>Digital Album</h2><p class="black">Streaming + Download</p><p>A new album generated each day by chance, from BELLACROSS's own sound materials.</p><h3>Download Digital Album <small>free</small></h3><div id="downloads"></div></section>
+        <ol id="tracks" class="tracks"></ol>
+        <section class="about"><h2>about</h2><p id="about">Selected recordings, chance operations, and a new seed. One edition each day.</p><p id="rules"></p></section>
+        <section class="credits"><h2>credits</h2><p id="credits"></p><p id="release-date"></p><a id="score-link" href="score.html">Read the score →</a></section>
+        <section class="sources"><h2>source materials</h2><div id="source-list"></div></section>
+      </section>
+      <section class="art" aria-label="Interactive record">
+        <div id="record-wrap"><div id="record" tabindex="0" role="slider" aria-label="Record playback position" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><img id="grooves" alt="A spiral spectral image of this album" draggable="false"><img id="hub" alt="" draggable="false"><div id="needle"><i></i></div><button id="enlarge" aria-label="Enlarge interactive record">⤢</button></div></div>
+        <div class="now-hearing" id="hearing" hidden><b>now hearing</b><div id="heard"></div></div>
+        <div class="share"><button id="share">↥ &nbsp;Share / Embed</button><a class="bandcamp-link">Bandcamp</a></div>
+        <p class="seed" id="seed"></p>
+      </section>
+    </div>
+    <aside class="artist"><img class="artist-avatar photo" alt="BELLACROSS"><h2 class="artist-name">BELLACROSS</h2><p id="bio" hidden></p><a class="bandcamp-link follow">Follow</a><a class="bandcamp-link">Bandcamp</a><h3>discography</h3><div id="discography"></div><a class="bandcamp-link all-music">View all music →</a><div class="artist-links"><a href="catalog.html?view=selected">Selected tracks</a><a id="admin-link" hidden>Manage this project</a></div></aside>
+  </main>
+  <footer><span class="artist-name">BELLACROSS</span> · <a href="score.html">generative score</a></footer>
+</div>
+<div id="sticky" hidden><img id="sticky-cover" alt=""><span id="sticky-title"></span><button id="sticky-play" aria-label="Play or pause">▶</button></div>
+<dialog id="zoom"><button id="close-zoom" aria-label="Close enlarged record">×</button><div id="zoom-slot"></div></dialog>
+<dialog id="share-dialog"><button class="close-dialog" aria-label="Close share">×</button><h2>Share this record</h2><label>Link<input id="share-url" readonly></label><button id="copy-link">Copy link</button><label>Embed<textarea id="embed-code" readonly></textarea></label><button id="copy-embed">Copy embed</button><p id="copy-status" role="status"></p></dialog>
+<audio id="audio" preload="metadata" crossorigin="anonymous"></audio><script type="module" src="app.js"></script>
+</body></html>

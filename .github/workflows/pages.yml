@@ -1,0 +1,35 @@
+name: Publish website
+on:
+  push:
+    branches: [main]
+    paths: ['web/**', 'scripts/build_site.py', '.github/workflows/pages.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python scripts/build_site.py --out .state/pages
+        env:
+          WORKER_URL: ${{ vars.WORKER_URL }}
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: .state/pages
+      - uses: actions/deploy-pages@v4
+        id: deploy

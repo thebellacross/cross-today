@@ -1,5 +1,6 @@
 """Loopback-only QA server. Public web files plus explicitly generated test audio."""
 import argparse
+import json
 import mimetypes
 import re
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -13,6 +14,11 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):self.send_file(False)
     def send_file(self,head):
         request=unquote(urlsplit(self.path).path)
+        if request=='/public-config.json':
+            data=json.dumps({'api':'','local_album':'local/album.json'}).encode()
+            self.send_response(200);self.send_header('Content-Type','application/json');self.send_header('Content-Length',str(len(data)));self.send_header('Cache-Control','no-store');self.end_headers()
+            if not head:self.wfile.write(data)
+            return
         root=ALBUM if request.startswith('/local/') else ROOT/'web'
         relative=request[len('/local/'):] if request.startswith('/local/') else request.lstrip('/')
         target=(root/(relative or 'index.html')).resolve()

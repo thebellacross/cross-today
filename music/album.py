@@ -103,7 +103,7 @@ def create_album(snapshot,cache,output,seed,day,number=0,settings=None,short=Non
     provenance['config']['generation']=g
     save_json(output/'score.json',{'album':album['id'],'tracks':scores})
     save_json(output/'provenance.json',provenance)
-    log=['BELLACROSS · '+catalog+' '+title,'seed: '+str(seed),'']
+    log=[cfg['artist']+' · '+catalog+' '+title,'seed: '+str(seed),'']
     for s in scores:
         log += [f'{s["n"]:02d} {s["title"]} [{s["form"]}]']
         for e in s['events']:

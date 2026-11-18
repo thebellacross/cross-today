@@ -1,0 +1,38 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "bellacross-daily",
+  "main": "legacy.js",
+  "compatibility_date": "2026-11-01",
+  "workers_dev": true,
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "COORDINATOR",
+        "class_name": "Coordinator"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "Coordinator"
+      ]
+    }
+  ],
+  "triggers": {
+    "crons": []
+  },
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "invocation_logs": false
+    }
+  },
+  "vars": {
+    "GITHUB_REPOSITORY": "thebellacross/cross-today",
+    "SITE_ORIGIN": "https://thebellacross.github.io",
+    "STORAGE_BACKEND": "github-free",
+    "PRIMARY_ORIGIN": "https://cross-today.thebellacross.workers.dev"
+  }
+}

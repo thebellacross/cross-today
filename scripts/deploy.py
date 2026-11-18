@@ -91,7 +91,7 @@ def main():
         if not domain:raise RuntimeError('Choose an available free workers.dev subdomain in the official dashboard.')
     subdomain=domain['subdomain'];worker=f'https://cross-today.{subdomain}.workers.dev'
     cfg['worker_url']=worker;cfg['site_url']=f'https://{cfg["github_owner"]}.github.io/{cfg["repository"]}/'
-    save_json(ROOT/'config.json',cfg);save_json(ROOT/'web/public-config.json',{'api':worker,'site_url':cfg['site_url']})
+    (ROOT/'config.json').write_text(json.dumps(cfg,ensure_ascii=False,indent=2)+'\n');save_json(ROOT/'web/public-config.json',{'api':worker,'site_url':cfg['site_url']})
     values={name:keychain(name) or keychain(name,secrets.token_urlsafe(36)) for name in ('ADMIN_TOKEN','SESSION_SECRET','RUN_TOKEN')};sensitive.extend(values.values())
     for name,value in {'RUN_TOKEN':values['RUN_TOKEN'],'STORAGE_TOKEN':token,'STORAGE_REPOSITORY':storage_repo}.items():run([gh,'secret','set',name,'--repo',repo],secret=value)
     run([gh,'variable','set','WORKER_URL','--repo',repo,'--body',worker])

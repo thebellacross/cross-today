@@ -57,7 +57,17 @@ class Cloud:
         if missing and r.status_code==404:return None
         if not r.ok:raise ServiceFailure('GitHub',method,r.status_code)
         return r.json() if r.content else None
-    def release(self,job_id):return self.gh(f'/repos/{self.repo}/releases/tags/{job_id}',missing=True)
+    def release(self,job_id):
+        release=self.gh(f'/repos/{self.repo}/releases/tags/{job_id}',missing=True)
+        if release:return release
+        # A draft can have a tag_name without an actual Git tag yet. GitHub's
+        # by-tag endpoint then returns 404, although the authenticated list has it.
+        for page in range(1,101):
+            releases=self.gh(f'/repos/{self.repo}/releases?per_page=100&page={page}')
+            match=next((r for r in releases if r['tag_name']==job_id),None)
+            if match:return match
+            if len(releases)<100:return None
+        raise RuntimeError('Release lookup exceeded the configured pagination guard.')
     def upload_assets(self,job_id,folder,album):
         release=self.release(job_id)
         if not release:release=self.gh(f'/repos/{self.repo}/releases','POST',{'tag_name':job_id,'target_commitish':os.environ.get('GITHUB_SHA','main'),'name':album['catalog']+' '+album['title'],'draft':True,'body':'Daily generated audio by CROSS. Original source recordings are private.'})

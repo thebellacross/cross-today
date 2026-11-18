@@ -48,7 +48,9 @@ try{
   const publish=async(day,existing)=>{
     const queued=existing||await jcall('/api/generate','POST',{day});const job=await jcall(`/internal/jobs/${queued.id}/claim`,'POST',{run:existing?'two':day},'run');const manifest={...fixture,id:job.id,day,seed:job.seed,final:false};
     await jcall(`/internal/permanent/catalog/${job.id}/cover-small.jpg`,'PUT',readFileSync('output/validation/cover-small.jpg'),'run');
-    await jcall(`/internal/jobs/${job.id}/ready`,'POST',{run:job.run,album:manifest},'run');await jcall(`/internal/jobs/${job.id}/publish`,'POST',{run:job.run},'run');return manifest;
+    await jcall(`/internal/jobs/${job.id}/ready`,'POST',{run:job.run,album:manifest},'run');
+    if(existing){await jcall(`/internal/jobs/${job.id}/failed`,'POST',{run:job.run},'run');const resumed=await jcall('/api/generate','POST',{day});assert.equal(resumed.status,'ready');assert.equal(resumed.seed,job.seed);assert.deepEqual(resumed.album,manifest);}
+    await jcall(`/internal/jobs/${job.id}/publish`,'POST',{run:job.run},'run');return manifest;
   };
   await publish('2026-11-18',first);
   const current=await jcall('/public/current','GET',undefined,null);assert.equal(current.id,first.id);

@@ -16,6 +16,13 @@ def test_public_failure_diagnostic_never_includes_private_error_text():
     assert not any(x in result for x in ('recording','private.invalid','secret'))
     assert 'HTTP 403' in failure_diagnostic(ServiceFailure('GitHub','POST',403))
 
+def test_draft_release_is_found_before_git_tag_exists():
+    cloud=Cloud.__new__(Cloud);cloud.repo='thebellacross/cross-today'
+    draft={'id':17,'tag_name':'album-2026-11-16','draft':True}
+    cloud.gh=lambda path,**kwargs: None if '/releases/tags/' in path else [draft]
+    assert cloud.release('album-2026-11-16')==draft
+    assert cloud.release('album-2026-11-17') is None
+
 
 def test_large_downloads_split_into_complete_independent_archives(tmp_path):
     for name in ('cover.png', 'credits.txt', 'score.json', 'provenance.json'):

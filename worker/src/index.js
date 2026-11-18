@@ -88,7 +88,7 @@ export class Coordinator {
   async config(){return structuredClone(await this.store.get('config')||defaults);}
   async list(prefix){return [...(await this.store.list({prefix})).values()];}
   async dispatch(mode,jobId) {
-    const job=await this.store.get('job:'+jobId);const ref=job?.config?.engine_ref||'main';
+    const job=await this.store.get('job:'+jobId);const ref=mode==='render'?(job?.config?.engine_ref||'main'):'main';
     const r=await fetch(`https://api.github.com/repos/${this.env.GITHUB_REPOSITORY}/actions/workflows/daily.yml/dispatches`,{method:'POST',headers:{Authorization:`Bearer ${this.env.GITHUB_TOKEN}`,Accept:'application/vnd.github+json','User-Agent':'cross-today','Content-Type':'application/json'},body:JSON.stringify({ref,inputs:{mode,job:jobId}})});
     if(!r.ok)throw new Error('GitHub dispatch failed');
   }
@@ -97,6 +97,8 @@ export class Coordinator {
     const config=await this.config();const jobId='album-'+day;let shouldDispatch=false;
     const job=await this.atomic(async()=>{
       let j=await this.store.get('job:'+jobId);const now=Date.now();
+      // Publishing repairs must reuse the already verified render and provenance.
+      if(j?.status==='failed'&&j.album&&(manual||retryable(j,now,config.schedule)))j.status='ready';
       if(j?.status==='ready') {if(publish){j.publish=true;await this.store.put('job:'+jobId,j);shouldDispatch=true;}return j;}
       if(j?.status==='published'||j?.status==='retired')return j;
       if(!j){
@@ -276,13 +278,13 @@ export class Coordinator {
         if(b.run!==j.run)return json({error:'Run lease mismatch'},409);
         if(action==='ready') {
           if(b.album?.id!==j.id||String(b.album.seed)!==j.seed||!b.album.assets||!b.album.tracks?.length)return json({error:'Invalid album'},400);
-          j.album=b.album;j.status='ready';j.lease_until=0;await this.store.put('job:'+jobId,j);return json({ok:true,publish:j.publish});
+          j.album=b.album;j.status='ready';j.lease_until=0;delete j.error;await this.store.put('job:'+jobId,j);return json({ok:true,publish:j.publish});
         }
         if(action==='publish') {
           if(j.status==='published')return json({ok:true});
           if(j.status!=='ready')return json({error:'Assets are not ready'},409);
           const current=await this.store.get('current');if(current&&current.day>j.day)return json({error:'Cannot replace a newer edition'},409);
-          j.status='published';j.published=Date.now();j.final=j.album.final;
+          j.status='published';j.published=Date.now();j.final=j.album.final;delete j.error;
           await this.store.put('job:'+jobId,j);await this.store.put('current',j.album);
           await this.store.put('catalog:'+jobId,{id:j.id,day:j.day,catalog:j.album.catalog,title:j.album.title,number:j.number,available:true,final:j.final,seed:j.seed});
           if(j.final)await this.store.put('ended',true);return json({ok:true});

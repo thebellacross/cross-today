@@ -145,7 +145,9 @@ class Cloud:
         if asset['size']!=size or asset.get('digest')!='sha256:'+checksum:raise RuntimeError('Retained file checksum mismatch.')
         self.api('/internal/storage/register','POST',{'key':key,'id':asset['id'],'bytes':size,'sha256':checksum})
     def download_private(self,path,target):
-        headers={'Authorization':'Bearer '+self.run_token}
+        # Range offsets and recorded sizes address stored bytes. CDN compression
+        # can remove Content-Length on JSON/text HEAD responses and change them.
+        headers={'Authorization':'Bearer '+self.run_token,'Accept-Encoding':'identity'}
         head=self.http.head(self.base+path,headers=headers,timeout=120)
         if not head.ok or not head.headers.get('Content-Length'):raise RuntimeError('Private source retrieval failed.')
         size=int(head.headers['Content-Length']);offset=0

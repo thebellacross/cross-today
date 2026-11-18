@@ -5,19 +5,24 @@
 
 ## 当前状态
 
-本地素材导入、生成、公开页面、受保护管理界面、Worker、Actions 工作流及
-免绑卡私有存储适配均已实现，GitHub 与 Cloudflare 官方账户已连接。**线上地址、真实云端发布和调度尚需实际验证；
-本地验证不等于完整交付。** 执行状态和验证限制见 `docs/verification.md`。
+网站、管理页、素材同步和真实云端生成已上线。当前采用免绑卡方案，没有开通 R2。
+执行记录、跨日验收和浏览器验证范围见 [验证记录](docs/verification.md)。
+
+- 网站：[CROSS](https://thebellacross.github.io/cross-today/)
+- 管理：[受保护管理页](https://cross-today.thebellacross.workers.dev/admin)
+- 代码：[thebellacross/cross-today](https://github.com/thebellacross/cross-today)
+- 集中配置：[config.json](config.json)
 
 ## 日常使用
 
-1. 管理页登录后批量选择声音文件。文件会先上传到私有存储，再由后台任务解码。
+1. 在这台 Mac 双击 `Open Admin.command` 自动登录，再批量选择声音文件。
+   文件先上传到私有存储，由后台任务解码；Mac 关闭后仍可供云端生成使用。
 2. “立即生成 / 重试今天”使用固定的当日素材快照。重复点击不会重复发行。
 3. 试听后加入 Selected。等到“已永久保存”再把它加入精选发行顺序。
 4. 调整顺序、标题和备注并保存；“导出发行包”包含 WAV、MP3、封面、曲名、
    credits 和来源记录。没有训练模型或自动发布 Bandcamp 的隐含操作。
 5. 参数、时区、生成/发布时间、保留张数和随机结束规则集中在 `config.json`。
-   配置与引擎更新须创建新的固定版本标签，已有任务保留创建时的版本。
+   改动渲染代码、依赖或头像时使用新的固定引擎标签，已有任务保留创建时的版本。
 
 默认上海时区，21:00 准备次日专辑，00:00 左右发布。Worker 每15分钟检查，
 Actions 每小时两次补查。平台延迟可能造成晚发布；失败保留上一张成功专辑。
@@ -27,21 +32,20 @@ Actions 每小时两次补查。平台延迟可能造成晚发布；失败保留
 ## 本地命令
 
 使用当前项目的虚拟环境，原始 `C_SoundSource` 文件不修改、不搬移。
-双击 `Start Preview.command`，再打开终端显示的本地地址，即可试听 `output/current`
+双击 `Start Preview.command`，再打开终端显示的本地地址，即可试听 `output/cross-current`
 中的完整本地专辑；关闭终端或按 Control-C 停止预览。这不是线上网站。
 
 ```sh
 .venv/bin/python scripts/doctor.py
 .venv/bin/python -m music.library C_SoundSource
 .venv/bin/python -m music.album --out output/manual --seed 20261118 --day 2026-11-18
-.venv/bin/python scripts/sync.py C_SoundSource
+.venv/bin/python scripts/sync.py C_SoundSource --keychain
 .venv/bin/python scripts/refresh_bandcamp.py
 ```
 
-同步命令只上传所指定文件夹里的支持格式，使用文件 SHA-256 去重；管理口令在
-终端中隐藏输入，不能放到命令参数或聊天。网页和本地同步使用相同原始素材 ID。
-部署时已在本机钥匙串保存管理凭据的情况下，可在同步命令末尾加 `--keychain`，
-直接使用项目专用凭据，不需要复制口令。
+同步命令只上传所指定文件夹里的支持格式，使用文件 SHA-256 去重；`--keychain`
+读取本机已保存的项目凭据，不需要复制口令。网页和本地同步使用相同原始素材 ID。
+更换 Mac 时需重新建立管理凭据，不要把密码或密钥放进命令参数或聊天。
 长录音分段解码使用有界内存，缓存为 mono PCM16 WAV + JSON；成品为立体声
 24-bit/48 kHz WAV 与320 kbps MP3。原立体声保留在原处与私有云端素材存储。
 

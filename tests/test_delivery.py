@@ -1,5 +1,6 @@
 import hashlib
 import zipfile
+from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
@@ -22,6 +23,25 @@ def test_draft_release_is_found_before_git_tag_exists():
     cloud.gh=lambda path,**kwargs: None if '/releases/tags/' in path else [draft]
     assert cloud.release('album-2026-11-16')==draft
     assert cloud.release('album-2026-11-17') is None
+
+def test_private_metadata_transfer_avoids_cdn_compression(tmp_path):
+    class Response:
+        status_code=206
+        headers={'Content-Range':'bytes 0-3/4'}
+        def __enter__(self):return self
+        def __exit__(self,*args):pass
+        def iter_content(self,*args):yield b'text'
+    class CDN:
+        def head(self,url,headers,**kwargs):
+            # Compressible metadata loses Content-Length when compression is allowed.
+            return SimpleNamespace(ok=True,headers={'Content-Length':'4'} if headers.get('Accept-Encoding')=='identity' else {})
+        def get(self,url,headers,**kwargs):
+            assert headers['Accept-Encoding']=='identity'
+            assert headers['Range']=='bytes=0-3'
+            return Response()
+    cloud=Cloud.__new__(Cloud);cloud.base='https://example.test';cloud.run_token='test-only';cloud.http=CDN()
+    target=tmp_path/'credits.txt';cloud.download_private('/private/credits.txt',target)
+    assert target.read_bytes()==b'text'
 
 
 def test_large_downloads_split_into_complete_independent_archives(tmp_path):

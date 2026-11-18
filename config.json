@@ -2,7 +2,7 @@
   "artist": "CROSS",
   "bandcamp": "https://bellacrossmusic.bandcamp.com/",
   "credits": "Recordings and curation by CROSS. Composed from the artist's selected sound materials using a seeded, independent implementation of the Chance structures.",
-  "engine_ref": "engine-v7",
+  "engine_ref": "engine-v8",
   "generation": {
     "daily_parameters": true,
     "feed": null,

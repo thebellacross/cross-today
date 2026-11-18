@@ -200,7 +200,10 @@ class Cloud:
             track=s['track'];manifest=s['manifest'];mapping={track['wav']:'track.wav',track['src']:'track.mp3','cover.png':'cover.png','provenance.json':'provenance.json','credits.txt':'credits.txt'}
             with tempfile.TemporaryDirectory() as directory:
                 for original,destination in mapping.items():
-                    data=self.download_generated(s['album'],original,manifest['assets'][original]);path=Path(directory)/destination;path.write_bytes(data);self.private_put(f'selected/{selection_id}/{destination}',path)
+                    data=self.download_generated(s['album'],original,manifest['assets'][original])
+                    if destination=='provenance.json':
+                        provenance=json.loads(data);provenance['selected_track']={'album':s['album'],'n':track['n'],'title':track['title'],'seed':track['seed'],'original_wav':track['wav'],'original_mp3':track['src']};data=canonical(provenance)
+                    path=Path(directory)/destination;path.write_bytes(data);self.private_put(f'selected/{selection_id}/{destination}',path)
             self.api('/internal/selections/'+selection_id,'POST',{'status':'ready'});print('Selected audio permanently saved.',flush=True)
         except Exception:
             self.api('/internal/selections/'+selection_id,'POST',{'status':'failed'});raise
@@ -209,6 +212,7 @@ class Cloud:
         if e['status']=='ready':return
         titles=[f'{i:02d}. {s["track"]["title"]}' for i,s in enumerate(e['selections'],1)]
         common={'release.json':canonical(e['playlist']),'tracklist.txt':'\n'.join(titles).encode(),'credits.txt':((e['playlist']['title'] or 'Selected')+'\nCROSS\n\n'+'\n'.join(titles)+'\n\n'+e['playlist']['notes']).encode()}
+        limit=max(64*1024**2,min(int(e.get('volume_bytes',1024**3)),1536*1024**2))
         def write(z,name,data=None,path=None):
             info=zipfile.ZipInfo(name,(1980,1,1,0,0,0));info.compress_type=zipfile.ZIP_STORED;info.external_attr=0o644<<16
             with z.open(info,'w',force_zip64=True) as dest:
@@ -222,11 +226,11 @@ class Cloud:
                 for name in ('track.wav','track.mp3','cover.png','provenance.json','credits.txt'):
                     path=root/(str(i)+'-'+name);self.download_private(f'/internal/permanent/selected/{s["id"]}/{name}',path);files.append((name,path))
                 size=sum(p.stat().st_size for _,p in files)
-                if z is None or total+size>1024**3:
+                if i==1:common['cover.png']=next(p for n,p in files if n=='cover.png').read_bytes()
+                if z is None or total+size>limit:
                     if z:z.close()
                     path=root/f'release-{len(volumes)+1:02d}.zip';volumes.append(path);z=zipfile.ZipFile(path,'w');total=65536
                     for name,data in common.items():write(z,name,data=data)
-                    cover=next(p for n,p in files if n=='cover.png');write(z,'cover.png',path=cover)
                 for name,path in files:write(z,f'{i:02d}/{name}',path=path);total+=path.stat().st_size;path.unlink()
                 write(z,f'{i:02d}/curation.txt',data=s.get('note','').encode())
             if z:z.close()

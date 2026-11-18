@@ -117,6 +117,8 @@ def main():
     if tag.returncode:run(['git','tag',cfg['engine_ref']])
     helper='!'+shlex.quote(gh)+' auth git-credential'
     run(['git','-c','credential.helper='+helper,'push','-u','origin','main']);run(['git','-c','credential.helper='+helper,'push','origin',cfg['engine_ref']])
+    upgrade=requests.post(worker+'/internal/config/upgrade',headers={'Authorization':'Bearer '+values['RUN_TOKEN']},json={},timeout=60)
+    if not upgrade.ok:raise RuntimeError('Worker version promotion failed; existing job snapshots remain unchanged.')
     if api('/repos/'+repo+'/pages',allow=[404]) is None:api('/repos/'+repo+'/pages','POST',{'build_type':'workflow'})
     api('/repos/'+repo+'/actions/workflows/pages.yml/dispatches','POST',{'ref':'main'})
     save_json(ROOT/'.state/deployment.json',{'worker':worker,'admin':worker+'/admin','site':cfg['site_url'],'repository':'https://github.com/'+repo,'backend':'github-free','state':'Pages deployment dispatched; cloud audio validation remains required'})

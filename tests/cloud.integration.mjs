@@ -72,6 +72,7 @@ try{
   assert.equal((await call(`/media/${first.id}/01.mp3`,'GET',undefined,null)).status,404);
   const kept=await call(`/selected/${s.id}/track.mp3`,'GET',undefined,null,{Range:'bytes=0-31'});assert.equal(kept.status,206);assert.equal((await kept.arrayBuffer()).byteLength,32);
   const selected=await jcall('/public/selected','GET',undefined,null);assert.ok(!JSON.stringify(selected).includes('private curation'));
+  const waveDownload=await call(new URL(selected[0].wav).pathname+'?download=1','HEAD',undefined,null);assert.equal(waveDownload.status,200);assert.match(waveDownload.headers.get('Content-Disposition'),/attachment/);
   const a=await call('/api/playlist','PUT',{revision:0,order:[s.id],title:'Test edition',notes:'Private note'});assert.equal(a.status,200);
   assert.equal((await call('/api/playlist','PUT',{revision:0,order:[],title:'stale',notes:''})).status,409);
   const edition=await jcall('/api/export','POST',{});const exportDispatches=dispatches;assert.equal((await jcall('/api/export','POST',{})).id,edition.id);assert.equal(dispatches,exportDispatches);

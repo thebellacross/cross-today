@@ -102,7 +102,7 @@ def main():
     run(wrangler+['secret','bulk','--config','worker/wrangler.jsonc'],secret=json.dumps({**values,'GITHUB_TOKEN':token,'STORAGE_REPOSITORY':storage_repo}))
     if not (ROOT/'.git').exists():run(['git','init','-b','main'])
     run(['git','config','user.name',profile['login']]);run(['git','config','user.email',f'{profile["id"]}+{profile["login"]}@users.noreply.github.com'])
-    run(['git','add','.gitignore','.github','music','scripts','web','worker','tests','docs','config.json','requirements.txt','package.json','package-lock.json','README.md','THIRD_PARTY.md','Start Preview.command','Open Admin.command'])
+    run(['git','add','.gitignore','.github','music','scripts','web','worker','tests','docs','config.json','requirements.txt','package.json','package-lock.json','README.md','THIRD_PARTY.md','Start Preview.command','Open Admin.command','Sync Sounds.command'])
     staged=run(['git','diff','--cached','--name-only']).stdout.splitlines()
     forbidden=('.secrets/','.state/','.cache/','.reference/','.tools/','C_SoundSource/','output/')
     if any(p.startswith(forbidden) for p in staged):raise RuntimeError('Private-file publication guard blocked the commit.')

@@ -23,7 +23,7 @@ async function adminAuth(request,env) {
 }
 function cors(response,origin='*') {
   const r=new Response(response.body,response);r.headers.set('Access-Control-Allow-Origin',origin);
-  r.headers.set('Access-Control-Allow-Headers','Range, Content-Type, X-Requested-With');r.headers.set('Access-Control-Expose-Headers','Content-Length, Content-Range, Accept-Ranges, ETag');
+  r.headers.set('Access-Control-Allow-Headers','Range, Content-Type, X-Requested-With');r.headers.set('Access-Control-Expose-Headers','Content-Length, Content-Range, Accept-Ranges, ETag, Content-Disposition');
   r.headers.set('X-Content-Type-Options','nosniff');return r;
 }
 function secured(response) {
@@ -162,12 +162,12 @@ export class Coordinator {
     if(p==='/public/current'){const current=await this.store.get('current');return json(publicAlbum(current,origin),current?200:404);}
     if(p.startsWith('/public/album/')){const jobId=p.slice('/public/album/'.length);if(!/^album-\d{4}-\d{2}-\d{2}$/.test(jobId))return json({error:'Not found'},404);const j=await this.store.get('job:'+jobId);return j?.status==='published'?json(publicAlbum(j.album,origin)):json({error:'Edition unavailable'},404);}
     if(p==='/public/catalog')return json((await this.list('catalog:')).sort((a,b)=>b.day.localeCompare(a.day)).map(c=>({...c,cover:`${origin}/catalog/${c.id}/cover-small.jpg`})));
-    if(p==='/public/selected')return json((await this.list('selection:')).filter(x=>x.status==='ready').map(x=>({id:x.id,title:x.track.title,duration:x.track.duration,src:`${origin}/selected/${x.id}/track.mp3`,wav:`${origin}/selected/${x.id}/track.wav`,cover:`${origin}/selected/${x.id}/cover.png`})));
+    if(p==='/public/selected')return json((await this.list('selection:')).filter(x=>x.status==='ready').map(x=>({id:x.id,title:x.track.title,duration:x.track.duration,src:`${origin}/selected/${x.id}/track.mp3`,wav:`${origin}/selected/${x.id}/track.wav?download=1`,cover:`${origin}/selected/${x.id}/cover.png`})));
     let match;
     if((match=p.match(/^\/catalog\/(album-\d{4}-\d{2}-\d{2})\/(cover-small\.jpg)$/)))return serveObject(this.permanent,`catalog/${match[1]}/${match[2]}`,request,match[2]);
     if((match=p.match(/^\/selected\/([0-9a-f-]{36})\/(track\.(?:mp3|wav)|cover\.png)$/))) {
       const selection=await this.store.get('selection:'+match[1]);if(selection?.status!=='ready')return json({error:'Not found'},404);
-      return serveObject(this.permanent,`selected/${match[1]}/${match[2]}`,request,match[2]);
+      const response=await serveObject(this.permanent,`selected/${match[1]}/${match[2]}`,request,match[2]);if(url.searchParams.get('download')==='1')response.headers.set('Content-Disposition',`attachment; filename="${match[2]}"`);return response;
     }
     if((match=p.match(/^\/media\/(album-\d{4}-\d{2}-\d{2})\/([^/]+)$/))) {
       const [,jobId,name]=match;const j=await this.store.get('job:'+jobId);
@@ -176,6 +176,7 @@ export class Coordinator {
       const r=await fetch(`https://github.com/${this.env.GITHUB_REPOSITORY}/releases/download/${jobId}/${name}`,{method,headers:range?{Range:range}:{},redirect:'follow'});
       if(!r.ok)return new Response(null,{status:r.status===416?416:r.status===404?404:502,headers:r.status===416?{'Content-Range':r.headers.get('Content-Range')||''}:{}});
       const h=new Headers({'Content-Type':mime(name),'Accept-Ranges':'bytes','Cache-Control':'public,max-age=300'});for(const k of ['Content-Length','Content-Range','ETag','Last-Modified'])if(r.headers.has(k))h.set(k,r.headers.get(k));
+      if(name.endsWith('.zip')||url.searchParams.get('download')==='1')h.set('Content-Disposition',`attachment; filename="${name}"`);
       return new Response(method==='HEAD'?null:r.body,{status:r.status,headers:h});
     }
     if(p==='/api/state') {

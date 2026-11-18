@@ -47,7 +47,7 @@ record.addEventListener('keydown',e=>{if(!album)return;if(e.key===' '){e.prevent
 $('enlarge').onclick=e=>{e.stopPropagation();$('zoom-slot').append(record);$('zoom').showModal();$('enlarge').hidden=true;};
 function unzoom(){if($('zoom').open)$('zoom').close();$('record-wrap').append(record);$('enlarge').hidden=false;}
 $('close-zoom').onclick=unzoom;$('zoom').addEventListener('close',unzoom);$('zoom').addEventListener('click',e=>{if(e.target===$('zoom'))unzoom();});
-$('share').onclick=()=>{const u=new URL(location.href);if(album&&!local)u.searchParams.set('album',album.id);$('share-url').value=u.href;u.searchParams.set('embed','1');$('embed-code').value=`<iframe src="${u.href}" title="BELLACROSS record" width="100%" height="700" allow="autoplay" loading="lazy"></iframe>`;$('share-dialog').showModal();};
+$('share').onclick=()=>{const u=new URL(location.href);if(album&&!local)u.searchParams.set('album',album.id);$('share-url').value=u.href;u.searchParams.set('embed','1');$('embed-code').value=`<iframe src="${u.href}" title="CROSS record" width="100%" height="700" allow="autoplay" loading="lazy"></iframe>`;$('share-dialog').showModal();};
 document.querySelector('.close-dialog').onclick=()=>$('share-dialog').close();
 for(const [button,input]of [['copy-link','share-url'],['copy-embed','embed-code']])$(button).onclick=async()=>{try{await navigator.clipboard.writeText($(input).value);$('copy-status').textContent='Copied';}catch{$(input).select();$('copy-status').textContent='Select and copy the text above.';}};
 new IntersectionObserver(([entry])=>{playerVisible=entry.isIntersecting;update();},{threshold:0}).observe($('main-player'));

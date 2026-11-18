@@ -41,5 +41,5 @@ for block in re.findall(r'<li\b[^>]*class="[^"]*music-grid-item[^>]*>(.*?)</li>'
     albums.append({'title':clean(title[1]),'url':url,'cover':f'assets/artist/{slug}.jpg','cover_source':source,'released':date})
 if not albums:raise SystemExit('No albums could be verified; the existing list is unchanged.')
 avatar_url=html.unescape(avatar[1]);(assets/'bellacross.jpg').write_bytes(fetch(avatar_url).content)
-data={'name':clean(name[1]),'bandcamp':base,'avatar':'assets/artist/bellacross.jpg','avatar_source':avatar_url,'bio':previous.get('bio',''),'location':previous.get('location',''),'verified_at':datetime.date.today().isoformat(),'albums':albums}
+data={'name':cfg.get('artist') or clean(name[1]),'bandcamp':base,'avatar':'assets/artist/bellacross.jpg','avatar_source':avatar_url,'bio':previous.get('bio',''),'location':previous.get('location',''),'verified_at':datetime.date.today().isoformat(),'albums':albums}
 save_json(ROOT/'web/artist.json',data);print(f'Verified {data["name"]}: {len(albums)} Bandcamp releases. Publish the updated website to apply.')

@@ -1,4 +1,4 @@
-name: Daily BELLACROSS
+name: Daily CROSS
 on:
   workflow_dispatch:
     inputs:

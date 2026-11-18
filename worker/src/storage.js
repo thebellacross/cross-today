@@ -64,7 +64,7 @@ export class GitHubBucket {
     let record = await this.store.get(key); if (record) return record;
     record = await this.api(`/repos/${location.repo}/releases/tags/${location.tag}`, {missing: true});
     if (!record) {
-      try { record = await this.api(`/repos/${location.repo}/releases`, {method: 'POST', body: {tag_name: location.tag, target_commitish: 'main', name: location.tag, draft: false, make_latest: 'false', body: location.public ? 'Retained output of the BELLACROSS music project. Excluded from daily cleanup.' : 'Private inputs and retained project records. Do not change this repository to public.'}}); }
+      try { record = await this.api(`/repos/${location.repo}/releases`, {method: 'POST', body: {tag_name: location.tag, target_commitish: 'main', name: location.tag, draft: false, make_latest: 'false', body: location.public ? 'Retained output of the CROSS music project. Excluded from daily cleanup.' : 'Private inputs and retained project records. Do not change this repository to public.'}}); }
       catch (e) { if (e.upstreamStatus !== 422) throw e; record = await this.api(`/repos/${location.repo}/releases/tags/${location.tag}`); }
     }
     const saved = {id: record.id, tag: location.tag}; await this.store.put(key, saved); return saved;

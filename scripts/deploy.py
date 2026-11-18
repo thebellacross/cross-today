@@ -78,8 +78,8 @@ def main():
     print('Prepared: public code/Pages repository, separate private material repository, free Worker with SQLite metadata; no R2 or subscription changes.',flush=True)
     if not args.apply:
         print('Read-only preflight complete. Use --apply to deploy the prepared project.');return
-    if not repository:repository=api('/user/repos','POST',{'name':cfg['repository'],'private':False,'description':'Daily generative recordings by BELLACROSS. Source recordings remain private.','auto_init':False,'has_issues':False,'has_wiki':False,'has_projects':False})
-    if not private_repo:private_repo=api('/user/repos','POST',{'name':storage_repo.split('/')[1],'private':True,'description':'Private recording inputs and retained data for the BELLACROSS generative music project.','auto_init':True,'has_issues':False,'has_wiki':False,'has_projects':False})
+    if not repository:repository=api('/user/repos','POST',{'name':cfg['repository'],'private':False,'description':'Daily generative recordings by CROSS. Source recordings remain private.','auto_init':False,'has_issues':False,'has_wiki':False,'has_projects':False})
+    if not private_repo:private_repo=api('/user/repos','POST',{'name':storage_repo.split('/')[1],'private':True,'description':'Private recording inputs and retained data for the CROSS generative music project.','auto_init':True,'has_issues':False,'has_wiki':False,'has_projects':False})
     if api('/repos/'+storage_repo)['private'] is not True:raise RuntimeError('Private repository verification failed.')
     api('/repos/'+storage_repo+'/actions/permissions','PUT',{'enabled':False})
     keychain('STORAGE_REPOSITORY',storage_repo)

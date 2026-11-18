@@ -1,7 +1,7 @@
-# BELLACROSS daily recordings
+# CROSS daily recordings
 
-在当前项目内工作的个人生成音乐系统。艺名和正式作品来自已核对的
-[Bandcamp 页面](https://bellacrossmusic.bandcamp.com/)。项目名称未确认，保留为空。
+在当前项目内工作的个人生成音乐系统。显示名称由用户指定为 **CROSS**。已有作品、头像和专辑链接来自已核对的
+[Bandcamp 页面](https://bellacrossmusic.bandcamp.com/)。
 
 ## 当前状态
 

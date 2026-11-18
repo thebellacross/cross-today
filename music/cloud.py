@@ -47,7 +47,7 @@ class Cloud:
     def release(self,job_id):return self.gh(f'/repos/{self.repo}/releases/tags/{job_id}',missing=True)
     def upload_assets(self,job_id,folder,album):
         release=self.release(job_id)
-        if not release:release=self.gh(f'/repos/{self.repo}/releases','POST',{'tag_name':job_id,'name':album['catalog']+' '+album['title'],'draft':True,'body':'Daily generated audio by BELLACROSS. Original source recordings are private.'})
+        if not release:release=self.gh(f'/repos/{self.repo}/releases','POST',{'tag_name':job_id,'name':album['catalog']+' '+album['title'],'draft':True,'body':'Daily generated audio by CROSS. Original source recordings are private.'})
         if not release['draft']:
             # A failure after making the Release public must never pair old media
             # with a new seed/manifest, including an explicit re-snapshot retry.
@@ -208,7 +208,7 @@ class Cloud:
         e=self.api('/internal/exports/'+export_id)
         if e['status']=='ready':return
         titles=[f'{i:02d}. {s["track"]["title"]}' for i,s in enumerate(e['selections'],1)]
-        common={'release.json':canonical(e['playlist']),'tracklist.txt':'\n'.join(titles).encode(),'credits.txt':((e['playlist']['title'] or 'Selected')+'\nBELLACROSS\n\n'+'\n'.join(titles)+'\n\n'+e['playlist']['notes']).encode()}
+        common={'release.json':canonical(e['playlist']),'tracklist.txt':'\n'.join(titles).encode(),'credits.txt':((e['playlist']['title'] or 'Selected')+'\nCROSS\n\n'+'\n'.join(titles)+'\n\n'+e['playlist']['notes']).encode()}
         def write(z,name,data=None,path=None):
             info=zipfile.ZipInfo(name,(1980,1,1,0,0,0));info.compress_type=zipfile.ZIP_STORED;info.external_attr=0o644<<16
             with z.open(info,'w',force_zip64=True) as dest:

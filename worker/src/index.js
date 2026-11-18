@@ -184,7 +184,7 @@ export class Coordinator {
       if(update.series){if(update.series.random_end!==undefined)cfg.series.random_end=!!update.series.random_end;if(update.series.keep_releases!==undefined){if(!Number.isInteger(update.series.keep_releases)||update.series.keep_releases<1||update.series.keep_releases>30)return json({error:'Retain between 1 and 30 daily editions.'},400);cfg.series.keep_releases=update.series.keep_releases;}}
       await this.store.put('config',cfg);await this.store.put('config-revision',revision+1);return json({ok:true,revision:revision+1});});
     }
-    if(p==='/api/generate'&&method==='POST'){const b=await body();const cfg=await this.config();const day=b.day||localClock(new Date(),cfg.timezone).day;return json(await this.ensure(day,true,true));}
+    if(p==='/api/generate'&&method==='POST'){const b=await body();const cfg=await this.config();const day=b.day||localClock(new Date(),cfg.timezone).day;const job=await this.ensure(day,true,true);await this.store.put('activated',true);return json(job);}
     if((match=p.match(/^\/api\/jobs\/(album-\d{4}-\d{2}-\d{2})\/resnapshot$/))&&method==='POST') {
       const jobId=match[1];await this.atomic(async()=>{const j=await this.store.get('job:'+jobId);if(j?.status!=='failed')throw new PublicError('Only a failed job can be restarted with new materials.',409);const sources=(await this.list('source:')).filter(s=>s.enabled&&s.status!=='invalid').sort((a,b)=>a.hash.localeCompare(b.hash));if(!sources.length)throw new PublicError('No valid selected materials.');await this.store.put(`job-history:${jobId}:${id()}`,j);j.sources=sources.map(({hash,name,tags,extension,bytes})=>({hash,name,tags,extension,bytes}));j.config=await this.config();j.seed=String(BigInt('0x'+crypto.randomUUID().replaceAll('-','').slice(0,15)));j.attempts=0;j.run=null;j.lease_until=0;j.retry_after=0;j.album=null;await this.store.put('job:'+jobId,j);});return json(await this.ensure(jobId.slice(6),true,true));
     }
@@ -246,6 +246,8 @@ export class Coordinator {
     if((match=p.match(/^\/api\/exports\/([0-9a-f-]{36})\/retry$/))&&method==='POST')return json(await this.dispatchSaved('export',match[1],true));
     if((match=p.match(/^\/api\/exports\/([0-9a-f-]{36})$/))) {const e=await this.store.get('export:'+match[1]);if(!e)return json({error:'Not found'},404);if(url.searchParams.has('download')&&e.status==='ready'){const name=url.searchParams.get('file')||'release.zip';if(!(e.files||['release.zip']).includes(name))return json({error:'Unknown volume'},404);const r=await privateObject(this.permanent,`exports/${e.id}/${name}`,request,name);r.headers.set('Content-Disposition',`attachment; filename="${name}"`);return r;}return json(e);}
     if(p==='/internal/tick'&&method==='POST') {
+      // Initial bulk import finishes before the first owner-triggered generation activates the clock.
+      if(!await this.store.get('activated')&&!await this.store.get('current'))return json({ok:true,waiting:'Complete the initial import and generate once to activate daily publication.'});
       const cfg=await this.config(),input=await body();const now=new Date(input.now||Date.now());let errors=[];
       for(const todo of plan(now,cfg,await this.store.get('current'),await this.store.get('ended')))try{await this.ensure(todo.day,todo.publish);}catch(e){errors.push(e.message);}
       for(const kind of ['selection','export'])for(const t of await this.list(kind+':'))if(t.status!=='ready')await this.dispatchSaved(kind,t.id);

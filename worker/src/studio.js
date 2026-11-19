@@ -2,7 +2,10 @@
 const uuid=()=>crypto.randomUUID(), validId=x=>typeof x==='string'&&/^[a-zA-Z0-9_-]{1,80}$/.test(x);
 export async function profile(c,name='open') {
   let p=await c.store.get('taste-profile:'+name);
-  if(!p&&name==='open'){p={id:'open',name:'开放实验',context:'open',rules:{},revision:0,active_model:null};await c.store.put('taste-profile:open',p);}
+  if(!p&&name==='open'){p={id:'open',name:'开放实验',context:'open',rules:{},revision:0,dataset_revision:0,active_model:null};await c.store.put('taste-profile:open',p);}
+  // Preserve existing models while separating future training revisions by profile.
+  // Evaluation/audit changes must not invalidate an unrelated training dataset.
+  if(p&&p.dataset_revision===undefined){p.dataset_revision=await c.store.get('taste-revision')||0;await c.store.put('taste-profile:'+name,p);}
   return p;
 }
 export async function preferenceSnapshot(c) {
@@ -39,11 +42,11 @@ export async function handleStudio(c,request,{json,privateObject,PublicError}) {
     const rows=t.result.candidates.map(a=>({id:a.id,change:a.changes.action||'parent',score:a.features.reduce((n,x,i)=>n+x*(model?.weights[i]||0),0)})).sort((a,b)=>b.score-a.score);
     return json({frozen_model:t.model?.id||null,frozen_ranking:t.result.decision.ranking,current_model:model?.id||null,current_ranking:rows,labels:model?.labels||0,uncertainty:model&&model.families>=3?'parent-family bootstrap ensemble':'insufficient independent families; not estimated',notice:'Ranking changes verify the software connection; they do not prove better music.'});
   }
-  if(path==='/api/studio/profiles'&&method==='POST')return c.atomic(async()=>{const b=await read(),id=uuid();if(!String(b.name||'').trim())fail('请输入档案名称。');const p={id,name:String(b.name).slice(0,80),context:String(b.context||b.name).slice(0,300),rules:{},revision:0,active_model:null};await c.store.put('taste-profile:'+id,p);return json(p);});
+  if(path==='/api/studio/profiles'&&method==='POST')return c.atomic(async()=>{const b=await read(),id=uuid();if(!String(b.name||'').trim())fail('请输入档案名称。');const p={id,name:String(b.name).slice(0,80),context:String(b.context||b.name).slice(0,300),rules:{},revision:0,dataset_revision:0,active_model:null};await c.store.put('taste-profile:'+id,p);return json(p);});
   if((m=path.match(/^\/api\/studio\/profiles\/([\w-]+)$/))&&method==='PUT')return c.atomic(async()=>{
     const b=await read(),p=await profile(c,m[1]);if(!p)fail('档案不存在。',404);if(b.revision!==p.revision)fail('档案已在另一窗口修改，请刷新。',409);
-    if(b.restore_revision!==undefined){const old=await c.store.get(`taste-profile-history:${p.id}:${b.restore_revision}`);if(!old)fail('历史档案版本不存在。');const saved=old.active_model&&await c.store.get('taste-model:'+old.active_model);if(saved&&saved.model.dataset_revision!==(await c.store.get('taste-revision')||0)&&!b.confirm_historical)fail('历史档案包含旧反馈模型，请明确确认回退。',409);p.rules=structuredClone(old.rules);p.active_model=old.active_model;}
-    if(b.model!==undefined){const model=b.model&&await c.store.get('taste-model:'+b.model);if(b.model&&model?.profile_id!==p.id)fail('模型不属于此档案。');if(model&&model.model.dataset_revision!==(await c.store.get('taste-revision')||0)&&!b.confirm_historical)fail('这是旧反馈版本。请确认回退，或重新训练。',409);p.active_model=b.model||null;}
+    if(b.restore_revision!==undefined){const old=await c.store.get(`taste-profile-history:${p.id}:${b.restore_revision}`);if(!old)fail('历史档案版本不存在。');const saved=old.active_model&&await c.store.get('taste-model:'+old.active_model);if(saved&&saved.model.dataset_revision!==p.dataset_revision&&!b.confirm_historical)fail('历史档案包含旧反馈模型，请明确确认回退。',409);p.rules=structuredClone(old.rules);p.active_model=old.active_model;}
+    if(b.model!==undefined){const model=b.model&&await c.store.get('taste-model:'+b.model);if(b.model&&model?.profile_id!==p.id)fail('模型不属于此档案。');if(model&&model.model.dataset_revision!==p.dataset_revision&&!b.confirm_historical)fail('这是旧反馈版本。请确认回退，或重新训练。',409);p.active_model=b.model||null;}
     if(b.rules!==undefined){const rules=b.rules;if(!rules||typeof rules!=='object'||Array.isArray(rules))fail('规则格式错误。');const keys=['structure_randomness','processing_intensity','bit_damage','bus_intervention','loop_activity','space_motion','dropout_probability','stereo_width'];if(Object.keys(rules).some(k=>!['controls','preserve_channels','max_events'].includes(k)))fail('未知规则。');if(rules.controls&&Object.entries(rules.controls).some(([k,v])=>!keys.includes(k)||!Number.isFinite(v)||v<0||v>1))fail('控制值必须在 0–1 之间。');if(rules.max_events!==undefined&&(!Number.isInteger(rules.max_events)||rules.max_events<2||rules.max_events>100))fail('事件上限范围为 2–100。');p.rules=rules;}
     await c.store.put(`taste-profile-history:${p.id}:${p.revision}`,await profile(c,p.id));p.revision++;await c.store.put('taste-profile:'+p.id,p);
     if(b.daily===true){const cfg=await c.config();cfg.preference_profile=p.id;await c.store.put('config',cfg);await c.store.put('config-revision',(await c.store.get('config-revision')||0)+1);}return json(p);
@@ -52,7 +55,7 @@ export async function handleStudio(c,request,{json,privateObject,PublicError}) {
     const b=await read();if(!validId(b.request_id))fail('缺少请求去重标识。');const key='studio-request:'+b.request_id;
     const task=await c.atomic(async()=>{const old=await c.store.get(key);if(old)return c.store.get('studio-task:'+old);const p=await profile(c,b.profile_id||'open');if(!p)fail('档案不存在。');const cfg=await c.config();if(cfg.generation.renderer!=='composition')fail('请先完成引擎升级。',409);
       let t={id:uuid(),kind:path.endsWith('/train')?'train':'render',evaluation:!!b.evaluation,profile:p,config:cfg,model:p.active_model?(await c.store.get('taste-model:'+p.active_model))?.model:null,seed:String(BigInt('0x'+uuid().replaceAll('-','').slice(0,15))),created:Date.now(),status:'queued',attempts:0,lease_until:0};
-      if(t.kind==='train'){const feedback=(await c.list('taste-feedback:')).filter(f=>f.profile_id===p.id&&!f.evaluation);t.feedback_refs=feedback.map(f=>[f.id,f.revision]);t.dataset_revision=await c.store.get('taste-revision')||0;}
+      if(t.kind==='train'){const feedback=(await c.list('taste-feedback:')).filter(f=>f.profile_id===p.id&&!f.evaluation);t.feedback_refs=feedback.map(f=>[f.id,f.revision]);t.dataset_revision=p.dataset_revision;}
       else {
         t.seconds=Number(b.seconds||36);if(t.seconds<8||t.seconds>900)fail('试听作品长度为 8–900 秒。');t.actions=b.actions||null;if(t.actions&&(!Array.isArray(t.actions)||t.actions.length>12||t.actions.some(x=>!['delay-entry','earlier-entry','continue','withdraw','depth','space','processing','replace-material','repeat','return-later','swap-sections'].includes(x))))fail('未知变体动作。');
         t.locks=b.locks||{events:[],regions:[],relations:[]};if(!Array.isArray(t.locks.events)||!Array.isArray(t.locks.regions)||!Array.isArray(t.locks.relations)||JSON.stringify(t.locks).length>12000||t.locks.regions.some(x=>!Array.isArray(x)||x.length!==2||!x.every(Number.isFinite)||x[0]<0||x[1]<=x[0]))fail('锁定范围无效。');
@@ -78,7 +81,10 @@ export async function handleStudio(c,request,{json,privateObject,PublicError}) {
     if(b.scope){if(!['whole','section','range','event','relationship'].includes(b.scope.kind))fail('反馈范围无效。');if(['event','relationship'].includes(b.scope.kind)&&!b.scope.events?.length)fail('请选择反馈对应的事件。');if(['range','section'].includes(b.scope.kind)&&!(Number.isFinite(b.scope.start)&&Number.isFinite(b.scope.end)&&b.scope.end>b.scope.start&&b.scope.start>=0))fail('反馈时间范围无效。');}if(b.confirmed!==true)fail('需要明确确认这条听后反馈。');if(!['A','B','both','neither','unknown','technical'].includes(b.choice))fail('选择无效。');
     const t=await c.store.get('studio-task:'+comparison.task),[a,d]=comparison.order.map(id=>t.result.candidates.find(x=>x.id===id));
     const f={...comparison,id:comparison.id,origin:'human',scope:b.scope||comparison.scope,choice:b.choice,revoked:!!b.revoked,revision:(old?.revision||0)+1,note:String(b.note||'').slice(0,4000),confirmed:true,features_A:a.features,features_B:d.features,audio_hashes:[a.audio_hash,d.audio_hash],audition_hashes:[a.audition_hash,d.audition_hash],audition_gains:[a.audition_gain,d.audition_gain],source_snapshots:[a.snapshot,d.snapshot],parent_plans:[a.parent_id,d.parent_id],changes:[a.changes,d.changes],engine_ref:t.config.engine_ref,updated:Date.now()};
-    await c.store.put(`taste-feedback-history:${f.id}:${f.revision}`,f);await c.store.put('taste-feedback:'+f.id,f);await c.store.put('taste-revision',(await c.store.get('taste-revision')||0)+1);if(old){const p=await profile(c,f.profile_id);if(p.active_model){await c.store.put(`taste-profile-history:${p.id}:${p.revision}`,p);p.active_model=null;p.revision++;p.invalidated_by_feedback=f.id;await c.store.put('taste-profile:'+p.id,p);}}return json(f);
+    const trainingChanged=!f.evaluation&&(['A','B'].includes(f.choice)||['A','B'].includes(old?.choice));
+    const p=trainingChanged?await profile(c,f.profile_id):null;
+    await c.store.put(`taste-feedback-history:${f.id}:${f.revision}`,f);await c.store.put('taste-feedback:'+f.id,f);await c.store.put('taste-revision',(await c.store.get('taste-revision')||0)+1);
+    if(p){if(old&&p.active_model){await c.store.put(`taste-profile-history:${p.id}:${p.revision}`,p);p.active_model=null;p.revision++;p.invalidated_by_feedback=f.id;}p.dataset_revision++;await c.store.put('taste-profile:'+p.id,p);}return json(f);
   });
   if((m=path.match(/^\/internal\/studio\/tasks\/([\w-]+)\/(claim|ready|failed)$/))&&method==='POST'){
     const b=await read(),id=m[1],action=m[2];

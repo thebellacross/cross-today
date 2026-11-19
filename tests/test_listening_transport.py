@@ -2,7 +2,7 @@
 from types import SimpleNamespace
 import pytest
 import requests
-from scripts.listening_runner import install_transport
+from scripts.listening_runner import install_transport,install_pinned_score_reader
 
 TASK='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
 
@@ -26,7 +26,7 @@ def test_only_known_idempotent_operations_repeat(monkeypatch,path,method,expecte
     else:assert cloud.api(path,method,data)=={'ok':True}
     assert len(attempts)==expected;assert data=={'result':{'engine_ref':'engine-v11'}}
     assert audit['engine_ref']=='engine-v11'
-    if path.endswith('/ready'):assert attempts[-1][0][2]['result']['transport_adapter']['version']=='private-transport-1'
+    if path.endswith('/ready'):assert attempts[-1][0][2]['result']['transport_adapter']['version']=='private-transport-2'
 
 def test_rejected_quota_waits_without_changing_frozen_arguments(monkeypatch):
     calls=[];sleeps=[]
@@ -46,3 +46,16 @@ def test_network_retries_remain_bounded(monkeypatch):
     install_transport(cloud,TASK,'engine-v11','test-coordinator')
     with pytest.raises(requests.exceptions.Timeout):cloud.api('/internal/storage/register','POST',{})
     assert len(calls)==4
+
+@pytest.mark.parametrize('valid',[True,False])
+def test_pinned_score_reader_preserves_raw_bytes_and_checks_identity(valid):
+    import hashlib
+    data=b'{"tracks": []}\n';seen=[]
+    def api(path):seen.append(path);return data
+    cloud=SimpleNamespace(api=api,download_generated=lambda *args:b'ordinary read-only path')
+    task={'id':TASK,'parent_daily':{'album':'album-2030-01-01'}};install_pinned_score_reader(cloud,task)
+    meta={'bytes':len(data),'sha256':hashlib.sha256(data if valid else b'wrong').hexdigest()}
+    if valid:assert cloud.download_generated('album-2030-01-01','score.json',meta)==data
+    else:
+        with pytest.raises(RuntimeError,match='checksum'):cloud.download_generated('album-2030-01-01','score.json',meta)
+    assert seen==[f'/internal/studio/tasks/{TASK}/daily-score'];assert cloud.download_generated('other','other.json',meta)==b'ordinary read-only path'

@@ -1,4 +1,5 @@
 // Auth is enforced by index.js before either /api or /internal reaches this module.
+import {GitHubBucket} from './storage.js';
 const uuid=()=>crypto.randomUUID(), validId=x=>typeof x==='string'&&/^[a-zA-Z0-9_-]{1,80}$/.test(x);
 export async function profile(c,name='open') {
   let p=await c.store.get('taste-profile:'+name);
@@ -23,6 +24,20 @@ export async function handleStudio(c,request,{json,privateObject,PublicError}) {
   const url=new URL(request.url),path=url.pathname,method=request.method;if(!path.startsWith('/api/studio/')&&!path.startsWith('/internal/studio/'))return null;
   const fail=(message,status=400)=>{throw new PublicError(message,status);};const read=async()=>{const text=await request.text();if(text.length>200000)fail('请求过大。',413);return JSON.parse(text||'{}');};let m;
   const stateTask=t=>{const {config,sources,model,feedback_refs,...safe}=t;return safe;};
+  if((m=path.match(/^\/internal\/studio\/tasks\/([\w-]+)\/daily-score$/))&&['GET','HEAD'].includes(method)){
+    // The read-only runner can access only the score pinned to this active task.
+    // No client URL, repository, filename or write operation is accepted.
+    const t=await c.store.get('studio-task:'+m[1]);if(t?.status!=='rendering'||!t.parent_daily||!t.source_manifest?.assets?.['score.json'])fail('Active daily listening task required.',404);
+    const repo=c.env.GITHUB_REPOSITORY,tag=t.parent_daily.album,bucket=new GitHubBucket(c,'permanent'),meta=t.source_manifest.assets['score.json'];
+    let release=await bucket.api(`/repos/${repo}/releases/tags/${tag}`,{missing:true});
+    for(let page=1;!release&&page<=10;page++){const rows=await bucket.api(`/repos/${repo}/releases?per_page=100&page=${page}`);release=rows.find(r=>r.tag_name===tag);if(rows.length<100)break;}
+    if(!release)fail('The pinned score is unavailable.',404);
+    const assets=await bucket.api(`/repos/${repo}/releases/${release.id}/assets?per_page=100`),asset=assets.find(a=>a.name==='score.json');
+    if(!asset||asset.size!==meta.bytes||(asset.digest&&asset.digest!=='sha256:'+meta.sha256))fail('The pinned score checksum differs.',409);
+    const obj={size:meta.bytes,sha256:meta.sha256,parts:[{id:asset.id,repo,tag,name:'score.json',public:false,size:meta.bytes,sha256:meta.sha256}]};
+    const reader={head:async()=>({...obj,httpEtag:'"'+meta.sha256+'"'}),get:(_key,options)=>bucket.get('pinned-score',options,obj)};
+    const response=await privateObject(reader,'pinned-score',request,'score.json');response.headers.set('Content-Type','application/octet-stream');return response;
+  }
   if((m=path.match(/^\/internal\/studio\/task\/([\w-]+)$/))&&method==='GET'){const t=await c.store.get('studio-task:'+m[1]);if(!t)fail('Unknown task',404);return json(t);}
   if(path==='/internal/studio/import'&&method==='POST')return c.atomic(async()=>{
     const b=await read();if(!/^[0-9a-f-]{36}$/.test(b.id))fail('Invalid task identity');const old=await c.store.get('studio-task:'+b.id);if(old)return json(old);

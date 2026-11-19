@@ -167,7 +167,7 @@ export class Coordinator {
           cfg.import.channels='preserve';cfg.preference_profile='open';changed=true;
         }
         if(changed){await this.store.put('config',cfg);await this.store.put('config-revision',(await this.store.get('config-revision')||0)+1);await this.store.put('config-upgrade:'+id(),{before,after:cfg.engine_ref,time:Date.now()});}
-        return json({ok:true,engine_ref:cfg.engine_ref,listening_transport:'private-transport-1',changed});});
+        return json({ok:true,engine_ref:cfg.engine_ref,listening_transport:'private-transport-2',changed});});
     }
     if(p==='/public/current'){const current=await this.store.get('current');return json(publicAlbum(current,origin),current?200:404);}
     if(p.startsWith('/public/album/')){const jobId=p.slice('/public/album/'.length);if(!/^album-\d{4}-\d{2}-\d{2}$/.test(jobId))return json({error:'Not found'},404);const j=await this.store.get('job:'+jobId);return j?.status==='published'?json(publicAlbum(j.album,origin)):json({error:'Edition unavailable'},404);}
@@ -311,14 +311,15 @@ export class Coordinator {
     if((match=p.match(/^\/internal\/cache\/([0-9a-f]{64})\/(manifest\.json|[0-9a-f]{64}\.wav)$/))) {
       const key=`derived/${match[1]}/${match[2]}`;
       if(method==='PUT'){
-        const data=await request.arrayBuffer(),prior=match[2].endsWith('.wav')&&await this.sources.head(key);
-        if(prior&&prior.sha256!==await hash(data))return json({error:'This derived audio identity already has different bytes. Keep its version or use a new adapter profile.'},409);
-        await this.sources.put(key,data);return json({ok:true});
+        const data=await request.arrayBuffer(),digest=await hash(data),prior=match[2].endsWith('.wav')&&await this.sources.head(key);
+        const priorDigest=prior&&(prior.sha256||prior.customMetadata?.sha256||await hash(await (await this.sources.get(key)).arrayBuffer()));
+        if(prior&&priorDigest!==digest)return json({error:'This derived audio identity already has different bytes. Keep its version or use a new adapter profile.'},409);
+        await this.sources.put(key,data,{customMetadata:{sha256:digest}});return json({ok:true});
       }
       if(['GET','HEAD'].includes(method)){
         const checksum=url.searchParams.get('sha');if(checksum&&!safeHash(checksum))return json({error:'Invalid checksum'},400);
         const bucket=checksum&&this.sources.version?await this.sources.version(key,checksum):this.sources;
-        if(checksum&&!this.sources.version&&(await bucket.head(key))?.sha256!==checksum)return json({error:'Historical derived version unavailable'},404);
+        if(checksum&&!this.sources.version){const meta=await bucket.head(key);if((meta?.sha256||meta?.customMetadata?.sha256)!==checksum)return json({error:'Historical derived version unavailable'},404);}
         return privateObject(bucket,key,request,match[2]);
       }
     }

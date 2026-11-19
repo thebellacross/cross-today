@@ -5,6 +5,7 @@ repeated; a rejected quota reservation waits without purchasing capacity.
 """
 import argparse
 import copy
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -14,7 +15,17 @@ import time
 
 import requests
 
-ADAPTER_VERSION='private-transport-1'
+ADAPTER_VERSION='private-transport-2'
+
+def install_pinned_score_reader(cloud,task):
+    if not task.get('parent_daily'):return
+    previous=cloud.download_generated;album=task['parent_daily']['album']
+    def read(job_id,name,meta):
+        if job_id!=album or name!='score.json':return previous(job_id,name,meta)
+        data=cloud.api(f'/internal/studio/tasks/{task["id"]}/daily-score')
+        if not isinstance(data,bytes) or len(data)!=meta['bytes'] or hashlib.sha256(data).hexdigest()!=meta['sha256']:raise RuntimeError('Pinned score checksum mismatch.')
+        return data
+    cloud.download_generated=read
 
 def install_transport(cloud,task_id,engine_ref,workflow_commit,deadline_seconds=6000):
     original=cloud.api;deadline=time.monotonic()+deadline_seconds
@@ -52,6 +63,7 @@ def main():
     cloud=Cloud();audit=install_transport(cloud,args.job,args.engine_ref,os.environ.get('GITHUB_SHA','local'))
     task=cloud.api('/internal/studio/task/'+args.job)
     if task['config']['engine_ref']!=args.engine_ref:raise SystemExit('Task version changed; refusing to render.')
+    install_pinned_score_reader(cloud,task)
     try:cloud_task(cloud,args.job)
     except Exception as error:
         print('Diagnostic: '+failure_diagnostic(error),flush=True)

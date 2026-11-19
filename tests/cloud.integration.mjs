@@ -67,6 +67,17 @@ try{
   await publish('2026-11-19');await publish('2026-11-20');
   const dailyFeedback={request_id:'full-track-fixture',profile_id:'open',album:'album-2026-11-20',track:1};
   const fullTrack=await jcall('/api/studio/from-daily','POST',dailyFeedback);assert.deepEqual(fullTrack.parent_daily,{album:'album-2026-11-20',track:1});assert.equal(fullTrack.source_manifest.assets['01.wav'].sha256,fixture.assets['01.wav'].sha256);assert.equal((await jcall('/api/studio/from-daily','POST',dailyFeedback)).id,fullTrack.id);
+  if(free){
+    const scorePath=`/internal/studio/tasks/${fullTrack.id}/daily-score`;
+    assert.equal((await call(scorePath,'GET',undefined,null)).status,403);assert.equal((await call(scorePath,'GET',undefined,'run')).status,404);
+    await jcall(`/internal/studio/tasks/${fullTrack.id}/claim`,'POST',{run:'retained-listening'},'run');
+    const headers={Authorization:'Bearer test-only-github','Content-Type':'application/json'},scoreBytes=readFileSync('output/validation/score.json');
+    const release=await(await github.fetch(new Request('https://api.github.com/repos/thebellacross/cross-today/releases',{method:'POST',headers,body:JSON.stringify({tag_name:'album-2026-11-20',draft:true})}))).json();
+    const asset=await(await github.fetch(new Request(`https://uploads.github.com/repos/thebellacross/cross-today/releases/${release.id}/assets?name=score.json`,{method:'POST',headers,body:scoreBytes}))).json();
+    const response=await call(scorePath,'GET',undefined,'run');assert.equal(response.status,200);assert.equal(response.headers.get('Cache-Control'),'private, no-store');assert.deepEqual(Buffer.from(await response.arrayBuffer()),scoreBytes);
+    assert.equal((await call(scorePath,'POST',{},'run')).status,404);
+    const stored=github.assets.get(asset.id);stored.data=Buffer.from('changed');assert.equal((await call(scorePath,'GET',undefined,'run')).status,409);stored.data=scoreBytes;
+  }
   assert.ok(!(await jcall('/internal/cleanup','GET',undefined,'run')).includes(first.id));
   for(const [from,to]of [['01.wav','track.wav'],['01.mp3','track.mp3'],['cover.png','cover.png'],['provenance.json','provenance.json'],['credits.txt','credits.txt']])await jcall(`/internal/permanent/selected/${s.id}/${to}`,'PUT',readFileSync('output/validation/'+from),'run');
   if(free){const asset=[...github.assets.values()].find(a=>a.tag==='kept-'+s.id&&a.name==='track.mp3');const body={key:`selected/${s.id}/track.mp3`,id:asset.id,bytes:asset.data.length,sha256:createHash('sha256').update(asset.data).digest('hex')};assert.equal((await call('/internal/storage/register','POST',{...body,sha256:'0'.repeat(64)},'run')).status,409);await jcall('/internal/storage/register','POST',body,'run');}
@@ -92,7 +103,7 @@ try{
   const broken=await jcall('/api/generate','POST',{day:'2026-11-21'});await jcall(`/internal/jobs/${broken.id}/claim`,'POST',{run:'fail'},'run');await jcall(`/internal/jobs/${broken.id}/failed`,'POST',{run:'fail'},'run');assert.equal((await jcall('/public/current','GET',undefined,null)).day,'2026-11-20');
   const repaired=await jcall(`/api/jobs/${broken.id}/upgrade`,'POST',{});assert.equal(repaired.seed,broken.seed);assert.deepEqual(repaired.sources,broken.sources);assert.equal((await call(`/api/jobs/${first.id}/upgrade`,'POST',{})).status,409);
   const cachePath='/internal/cache/'+'b'.repeat(64)+'/'+'c'.repeat(64)+'.wav',cacheData=new Uint8Array([1,2,3,4]);
-  await jcall(cachePath,'PUT',cacheData,'run');assert.equal((await call(cachePath,'PUT',new Uint8Array([4,3,2,1]),'run')).status,409);
+  await jcall(cachePath,'PUT',cacheData,'run');await jcall(cachePath,'PUT',cacheData,'run');assert.equal((await call(cachePath,'PUT',new Uint8Array([4,3,2,1]),'run')).status,409);
   const cacheHash=createHash('sha256').update(cacheData).digest('hex');assert.equal((await call(cachePath+'?sha='+cacheHash,'HEAD',undefined,'run')).status,200);
   if(free){await publish('2026-11-21');await publish('2026-11-22');
   assert.ok(!(await jcall('/internal/cleanup','GET',undefined,'run')).includes('album-2026-11-20'));

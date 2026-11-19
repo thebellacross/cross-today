@@ -123,7 +123,7 @@ def main():
     deadline=time.monotonic()+360
     while True:
         upgrade=requests.post(worker+'/internal/config/upgrade',headers={'Authorization':'Bearer '+values['RUN_TOKEN']},json={'engine_ref':cfg['engine_ref']},timeout=45)
-        if upgrade.ok and upgrade.json().get('engine_ref')==cfg['engine_ref'] and upgrade.json().get('listening_transport')=='private-transport-1':break
+        if upgrade.ok and upgrade.json().get('engine_ref')==cfg['engine_ref'] and upgrade.json().get('listening_transport')=='private-transport-2':break
         if (not upgrade.ok and upgrade.status_code not in (404,409,500,502,503,504)) or time.monotonic()>=deadline:raise RuntimeError('Worker version promotion failed; existing job snapshots remain unchanged.')
         print('Waiting for the active coordinator to adopt the deployed version.',flush=True);time.sleep(15)
     if api('/repos/'+repo+'/pages',allow=[404]) is None:api('/repos/'+repo+'/pages','POST',{'build_type':'workflow'})

@@ -91,6 +91,17 @@ try{
   const cachePath='/internal/cache/'+'b'.repeat(64)+'/'+'c'.repeat(64)+'.wav',cacheData=new Uint8Array([1,2,3,4]);
   await jcall(cachePath,'PUT',cacheData,'run');assert.equal((await call(cachePath,'PUT',new Uint8Array([4,3,2,1]),'run')).status,409);
   const cacheHash=createHash('sha256').update(cacheData).digest('hex');assert.equal((await call(cachePath+'?sha='+cacheHash,'HEAD',undefined,'run')).status,200);
+  if(free){await publish('2026-11-21');await publish('2026-11-22');
+  assert.ok(!(await jcall('/internal/cleanup','GET',undefined,'run')).includes('album-2026-11-20'));
+  const copied=readFileSync('output/validation/01.mp3'),mockHeaders={Authorization:'Bearer test-only-github','Content-Type':'application/json'};
+  const release=await(await github.fetch(new Request('https://api.github.com/repos/thebellacross/private-fixture/releases',{method:'POST',headers:mockHeaders,body:JSON.stringify({tag_name:'lab-'+fullTrack.id,draft:false})}))).json();
+  const asset=await(await github.fetch(new Request(`https://uploads.github.com/repos/thebellacross/private-fixture/releases/${release.id}/assets?name=c0.mp3`,{method:'POST',headers:mockHeaders,body:copied}))).json();
+  await jcall('/internal/storage/register','POST',{key:`lab/${fullTrack.id}/c0.mp3`,id:asset.id,bytes:copied.length,sha256:createHash('sha256').update(copied).digest('hex')},'run');
+  const listeningJob=await jcall(`/internal/studio/tasks/${fullTrack.id}/claim`,'POST',{run:'retained-listening'},'run');
+  await jcall(`/internal/studio/tasks/${fullTrack.id}/ready`,'POST',{run:'retained-listening',result:{engine_ref:listeningJob.config.engine_ref,files:{'c0.mp3':{bytes:copied.length,sha256:createHash('sha256').update(copied).digest('hex')}}}},'run');
+  assert.ok((await jcall('/internal/cleanup','GET',undefined,'run')).includes('album-2026-11-20'));await jcall('/internal/cleanup','POST',{id:'album-2026-11-20'},'run');
+  assert.equal((await call('/media/album-2026-11-20/01.mp3','GET',undefined,null)).status,404);
+  const retainedListening=await call(`/api/studio/media/${fullTrack.id}/c0.mp3`,'GET',undefined,'admin',{Range:'bytes=0-31'});assert.equal(retainedListening.status,206);assert.deepEqual(new Uint8Array(await retainedListening.arrayBuffer()),new Uint8Array(copied.subarray(0,32)));}
   if(free){assert.ok(github.privateRedirects>0);const boundary=await call(`/api/exports/${edition.id}?download=1`,'GET',undefined,'admin',{Range:`bytes=${8*1024*1024-16}-${8*1024*1024+15}`});assert.equal(boundary.status,206);assert.deepEqual(new Uint8Array(await boundary.arrayBuffer()),new Uint8Array(32).fill(37));assert.ok(!JSON.stringify(await jcall('/public/selected','GET',undefined,null)).includes('private-fixture'));github.private=false;assert.equal((await call('/internal/cache/'+'a'.repeat(64)+'/manifest.json','PUT',new Uint8Array([1,2]),'run')).status,409);}
   console.log((free?'FREE GITHUB BACKEND ':'R2 BACKEND ')+ 'PASS: authentication, CSRF, explicit empty-source error, config/note/playlist concurrency, resumable upload identity, job and copy deduplication, retry snapshot, atomic publication, Range/CORS, permanent Selected after cleanup, multipart export with private cache policy, durable export history and failed-day recovery.');
 }finally{await mf.dispose();}

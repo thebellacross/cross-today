@@ -122,5 +122,5 @@ def cloud_task(cloud,task_id):
             cloud.private_put(f'lab/{task_id}/result.json',folder/'result.json')
         cloud.api(f'/internal/studio/tasks/{task_id}/ready','POST',{'run':cloud.run,'result':result});print('Private listening task completed.',flush=True)
     except Exception as error:
-        reason='Cross-runtime replay mismatch' if str(error)=='Cross-runtime replay mismatch' else 'No audible sample difference' if str(error).startswith('No audible sample difference') else 'No allowed variation' if str(error).startswith('No allowed variation') else ''
-        cloud.api(f'/internal/studio/tasks/{task_id}/failed','POST',{'run':cloud.run,'reason':reason});raise
+        reason='Storage temporarily limited' if getattr(error,'status',None)==429 else 'Cross-runtime replay mismatch' if str(error)=='Cross-runtime replay mismatch' else 'No audible sample difference' if str(error).startswith('No audible sample difference') else 'No allowed variation' if str(error).startswith('No allowed variation') else ''
+        cloud.api(f'/internal/studio/tasks/{task_id}/failed','POST',{'run':cloud.run,'reason':reason,'retry_after':getattr(error,'retry_after',0)});raise

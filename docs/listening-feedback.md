@@ -40,7 +40,7 @@
 
 反馈、修订、档案和模型索引保存在受保护的 SQLite Durable Object。实验 WAV/MP3、分轨、计划、处理后分析、素材快照、模型及训练记录永久存入现有私有 GitHub Release 存储，标签 `lab-<id>`，每日清理不匹配此命名。公开页面不会得到私人评语、拟合权重、原始路径或凭据。仍是免绑卡方案，未开通 R2，也未改任何付费订阅。
 
-本地迁移：`python scripts/migrate_stereo.py C_SoundSource`。先保留旧快照，再增量添加新声道版本，旧缓存不覆盖。云端按完整 SHA-256 可读取历史派生版本；同一派生音频身份禁止写入不同字节。免费适配器的单个分段上限为 240 秒，长录音继续分段处理。
+本地迁移：`python scripts/migrate_stereo.py C_SoundSource`。先保留旧快照，再增量添加新声道版本，旧缓存不覆盖。云端按完整 SHA-256 可读取历史派生版本；同一派生音频身份禁止写入不同字节。免费适配器的单个分段上限为 240 秒，长录音继续分段处理。密集测试或大量分轨可能触及每小时写入限额；任务保留输入和已上传文件，后台重试，管理页显示最早重试时间，不自动购买容量。
 
 本地重放：`python scripts/replay_plan.py --plan PLAN.json --snapshot SNAPSHOT.json --cache .cache/audio --output output/replay.wav`。使用计划记录的不可变 engine_ref 与依赖；工具默认拒绝引擎哈希不符。管理页可下载原始 WAV，完整私有计划与报告由受保护媒体入口读取。
 

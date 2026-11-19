@@ -97,7 +97,7 @@ export async function handleStudio(c,request,{json,privateObject,PublicError}) {
       if(t.kind==='train')t.feedback=await Promise.all(t.feedback_refs.map(([id,revision])=>c.store.get(`taste-feedback-history:${id}:${revision}`)));return json(t);
     }
     if(t.run!==b.run)fail('任务租约不匹配。',409);if(t.status==='ready')return json({ok:true});t.lease_until=0;
-    if(action==='failed'){t.status='failed';t.error=b.reason==='Cross-runtime replay mismatch'?'父计划跨运行环境重放未通过字节校验，已停止受控比较。请从同一批素材建立新的云端父计划；旧音频仍保留。':b.reason==='No audible sample difference'?'参数改变后音频没有发生有效差异。请选择另一个事件或决定；没有创建偏好标签。':b.reason==='No allowed variation'?'锁定条件阻止了所有变体。请选择未锁定事件，或调整允许变化的范围。':'试听或训练未完成；原计划、反馈与公开专辑未改变。可保留输入重试。';t.retry_after=Date.now()+900000;}
+    if(action==='failed'){t.status='failed';t.error=b.reason==='Storage temporarily limited'?'免费存储写入额度暂满。已保存文件和原输入保留，后台会在额度恢复后重试，不会购买额外容量。':b.reason==='Cross-runtime replay mismatch'?'父计划跨运行环境重放未通过字节校验，已停止受控比较。请从同一批素材建立新的云端父计划；旧音频仍保留。':b.reason==='No audible sample difference'?'参数改变后音频没有发生有效差异。请选择另一个事件或决定；没有创建偏好标签。':b.reason==='No allowed variation'?'锁定条件阻止了所有变体。请选择未锁定事件，或调整允许变化的范围。':'试听或训练未完成；原计划、反馈与公开专辑未改变。可保留输入重试。';t.retry_after=Date.now()+Math.max(900000,Math.min(7200,Number(b.retry_after)||0)*1000);}
     else {t.status='ready';t.completed=Date.now();t.result=b.result;delete t.error;if(t.kind==='train'){const model=b.result.model;if(model?.label_origin!=='human'||model.profile_id!==t.profile.id||model.dataset_revision!==t.dataset_revision||!Array.isArray(model.weights)||model.weights.some(x=>!Number.isFinite(x)))fail('模型版本或标签来源不一致。');await c.store.put('taste-model:'+model.id,{id:model.id,task:t.id,profile_id:t.profile.id,created:Date.now(),model});}}
     await c.store.put('studio-task:'+id,t);return json({ok:true});});
   }

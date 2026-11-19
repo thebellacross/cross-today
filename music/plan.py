@@ -18,6 +18,11 @@ def controls(settings):
     return c
 
 def source_record(c):return {k:c[k] for k in ('id','source_hash','start_frame','end_frame','sample_rate','cache_sha256','name','tags','seconds','channels') if k in c}
+def source_span(clip,params):
+    loop=params['technique'] in ('loop','hits');start=params['offset_frame'] if loop else 0
+    end=start+params['period_frames'] if loop else clip['end_frame']-clip['start_frame']
+    return {'cache_start_frame':start,'cache_end_frame':end,'absolute_start_frame':clip['start_frame']+start,'absolute_end_frame':clip['start_frame']+end,
+            'initial_offset_frame':params['offset_frame'],'sampling':'recorded loop interval' if loop else 'available clip interval; actual trajectory/grains reconstructed from recorded parameters and seeds'}
 def processing(seed,eid,c):
     r=rng_for(seed,eid,'operations');ops=[]
     if c['processing_intensity']>0 and r.random()<c['processing_intensity']:
@@ -42,7 +47,7 @@ def event(seed,eid,section,clip,start,duration,role,tech,c,clips):
             'wet':float(r.uniform(.25,.8)) if tech!='tape' else 0.,'operations':processing(seed,eid,c)}
     if tech=='room':tail=max(tail,irlen/sr)
     return {'event_id':eid,'section_id':section,'source_id':clip['id'],'source_hash':clip['source_hash'],'source':source_record(clip),
-            'start':round(start,6),'duration':round(duration,6),'source_range':{'cache_start_frame':at,'cache_end_frame':at+period if tech in ('loop','hits') else length,'absolute_start_frame':clip['start_frame']+at,'sampling':'periodic read; speed/control explicitly recorded'},
+            'start':round(start,6),'duration':round(duration,6),'source_range':source_span(clip,params),
             'action':'enter','role':role,'relation_to':None,'channel_mode':'preserve','envelope':{'attack':min(.04,duration/8),'release':min(.3,duration/5),'shape':'sin2'},
             'gain':float(r.uniform(.12,.24)) if role=='foreground' else float(r.uniform(.06,.16)),
             'pan':{'start':pan,'end':max(-1.,min(1.,pan+motion))},'space':{'width':c['stereo_width'],'wet':float(rs.uniform(0,.35))*c['space_motion'],'delay_seconds':float(rs.uniform(.04,.22)),'decay_seconds':tail,'tail_seconds':tail},
@@ -69,7 +74,10 @@ def plan_composition(snapshot,seed,seconds,settings,context='open',family=None):
             eid=f'{sid}-e{j:02d}';q=rng_for(seed,eid,'placement');clip=clips[palette[int(rng_for(seed,eid,'material').integers(len(palette)))]]
             t=a+(b-a)*j/n+float(q.uniform(0,.12))*c['structure_randomness']*(b-a)/n
             if process=='interruption' and j%3==2:t=max(a,t-.1*(b-a))
-            duration=min(seconds-t,(12+c['structure_randomness']*float(q.uniform(-7,12)))*(1+density))
+            # The saved variation rate controls how long material persists:
+            # faster sections hand over sooner, without prescribing lower density.
+            persistence=(12+c['structure_randomness']*float(q.uniform(-7,12)))/(1+section['variation_rate'])
+            duration=min(seconds-t,persistence*(1+density))
             if form in ('fontana','automaton','drift'):duration=min(duration,5+c['structure_randomness']*float(q.uniform(-4.5,5)))
             duration=max(.05,duration);role='foreground' if j%3==0 else (['background','countervoice'][j%2] if not c['structure_randomness'] else str(q.choice(['background','countervoice'])))
             tech='tape'
@@ -157,7 +165,12 @@ def mutate(parent,action,target,seed,snapshot,locks=None):
         elif action=='repeat':
             new=copy.deepcopy(e);new['event_id']='variation-'+digest({'parent':parent['plan_id'],'seed':str(seed),'target':target})[:16];new['action']='return';new['relation_to']=target;new['start']=min(p['duration']-.1,e['start']+e['duration']+2);new['duration']=min(new['duration'],p['duration']-new['start']);p['events'].append(new);changed=[new['event_id']]
         else:raise ValueError('Unknown structural change.')
-        changes.append({'event':target,'action':action,'before':before,'after':copy.deepcopy(e)})
+    originals={e['event_id']:e for e in parent['events']};clips={c['id']:c for c in snapshot['clips']}
+    for e in p['events']:
+        if e['event_id'] in changed:e['source_range']=source_span(clips[e['source_id']],e['transform'])
+    # A return changes its responding events; a repeat creates a new event.
+    # Audit those actual events instead of logging the unchanged target as changed.
+    changes=[{'event':e['event_id'],'action':action,'before':copy.deepcopy(originals.get(e['event_id'])),'after':copy.deepcopy(e)} for e in p['events'] if e['event_id'] in changed]
     if set(changed)&set(locked.get('events',[])):raise ValueError('The change would move a locked event.')
     for relation in locked.get('relations',[]):
         if set(relation)&set(changed):raise ValueError('The change would alter a locked relationship.')

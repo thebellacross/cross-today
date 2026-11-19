@@ -18,7 +18,8 @@ from .library import import_one, ADAPTER_VERSION, adapter_version
 from .album import create_album
 
 class ServiceFailure(RuntimeError):
-    def __init__(self, service, method, status):
+    def __init__(self, service, method, status, retry_after=0):
+        self.status=status;self.retry_after=max(0,int(retry_after or 0))
         self.safe_detail=f'{service} {method} returned HTTP {status}'
         super().__init__(self.safe_detail)
 
@@ -42,7 +43,7 @@ class Cloud:
         headers={'Authorization':'Bearer '+self.run_token}
         r=self.http.request(method,self.base+path,headers=headers,json=data if raw is None else None,data=raw,timeout=300)
         if missing and r.status_code==404:return None
-        if not r.ok:raise ServiceFailure('Private service',method,r.status_code)
+        if not r.ok:raise ServiceFailure('Private service',method,r.status_code,r.headers.get('Retry-After',0))
         return r.json() if 'application/json' in r.headers.get('Content-Type','') else r.content
     def gh(self,path,method='GET',data=None,raw=None,missing=False,upload=False):
         base='https://uploads.github.com' if upload else 'https://api.github.com'

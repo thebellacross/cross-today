@@ -84,3 +84,15 @@ def test_studio_wav_can_exactly_match_daily_release_encoding(materials,tmp_path)
     snapshot,cache,g,_=materials;p=plan_composition(snapshot,78,3,g);audio,_,_=render_plan(p,snapshot,cache)
     raw=tmp_path/'daily.f32';raw.write_bytes(np.asarray(audio,dtype='<f4').tobytes());daily=tmp_path/'daily.wav';private=tmp_path/'private.wav'
     run_audio(['-y','-f','f32le','-ar',g['sample_rate'],'-ac',2,'-i',raw,'-ar',48000,'-c:a','pcm_s24le','-fflags','+bitexact',daily]);encode(audio,g['sample_rate'],private,True,48000);assert file_hash(daily)==file_hash(private)
+
+def test_return_and_repeat_audit_the_events_that_actually_change(materials):
+    snapshot,cache,g,_=materials;p=plan_composition(snapshot,111,12,g);target=p['events'][0]['event_id']
+    repeated=mutate(p,'repeat',target,80,snapshot);change=repeated['decision_log'][-1]['changes'][0]
+    assert change['before'] is None and change['after']['event_id']==repeated['events'][-1]['event_id'];assert change['event']!=target
+    moved=mutate(repeated,'return-later',target,81,snapshot);records=moved['decision_log'][-1]['changes'];assert all(c['event']!=target and c['before']['start']!=c['after']['start'] for c in records)
+
+def test_replacing_loop_material_records_the_exact_rendered_fragment(materials):
+    snapshot,cache,g,_=materials;g['form']='loops';g['controls']['loop_activity']=1.;p=plan_composition(snapshot,4,12,g);target=p['events'][0]['event_id']
+    variant=mutate(p,'replace-material',target,44,snapshot);e=variant['events'][0];span=e['source_range'];params=e['transform']
+    assert span['cache_start_frame']==params['offset_frame'];assert span['cache_end_frame']-span['cache_start_frame']==params['period_frames']
+    assert span['absolute_end_frame']-span['absolute_start_frame']==params['period_frames'];render_plan(variant,snapshot,cache)

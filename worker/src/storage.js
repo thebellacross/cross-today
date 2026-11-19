@@ -135,8 +135,17 @@ export class GitHubBucket {
     const part = {id: asset.id, ...location, size: asset.size, sha256: record.sha256};
     await this.store.put(this.key(key), {size: asset.size, sha256: record.sha256, parts: [part]});
   }
-  async get(key, options = {}) {
-    const obj = await this.head(key); if (!obj) return null;
+  async version(key, checksum) {
+    const current=await this.head(key);if(current?.sha256===checksum)return this;
+    const location=await this.location(key);if(location.public)throw new StorageError('Only private derived versions are supported.',400);
+    const release=await this.release(location),name=location.name+'-'+checksum.slice(0,24);let asset;
+    for(let page=1;page<=10&&!asset;page++){const rows=await this.api(`/repos/${location.repo}/releases/${release.id}/assets?per_page=100&page=${page}`);asset=rows.find(a=>a.name===name&&a.digest==='sha256:'+checksum);if(rows.length<100)break;}
+    if(!asset)return {head:async()=>null};
+    const obj={size:asset.size,sha256:checksum,parts:[{id:asset.id,...location,name,size:asset.size,sha256:checksum}]};
+    return {head:async()=>({...obj,httpEtag:'"'+checksum+'"'}),get:(_key,options)=>this.get(key,options,obj)};
+  }
+  async get(key, options = {}, version = null) {
+    const obj = version || await this.head(key); if (!obj) return null;
     const parts = obj.parts || [...(await this.store.list({prefix: obj.chunk_prefix})).values()];
     const begin = options.range?.offset || 0, end = Math.min(obj.size, begin + (options.range?.length ?? obj.size));
     let offset = 0; const segments = [];

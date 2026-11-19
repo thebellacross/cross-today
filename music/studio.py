@@ -9,9 +9,9 @@ from .plan import plan_composition,seed_for
 from .renderer import render_plan,render_event,hashlib_array
 from .preference import proposals,vector,select,rank,train,scoped_vector
 
-def encode(audio,rate,path,wav=False):
+def encode(audio,rate,path,wav=False,output_rate=None):
     path=Path(path);raw=path.with_suffix('.f32');raw.write_bytes(np.asarray(audio,dtype='<f4').tobytes())
-    try:run_audio(['-y','-f','f32le','-ar',rate,'-ac',2,'-i',raw,'-map_metadata','-1']+(['-c:a','pcm_s24le','-fflags','+bitexact'] if wav else ['-c:a','libmp3lame','-b:a','192k','-id3v2_version','0','-write_xing','0'])+[path])
+    try:run_audio(['-y','-f','f32le','-ar',rate,'-ac',2,'-i',raw,'-map_metadata','-1']+(['-ar',output_rate or rate,'-c:a','pcm_s24le','-fflags','+bitexact'] if wav else ['-c:a','libmp3lame','-b:a','192k','-id3v2_version','0','-write_xing','0'])+[path])
     finally:raw.unlink(missing_ok=True)
 
 def evaluate(plans,snapshot,cache):
@@ -37,7 +37,7 @@ def experiment(snapshot,cache,folder,request,settings,model=None,parent=None):
     folder=Path(folder);folder.mkdir(parents=True,exist_ok=True);seed=int(request['seed']);profile=request['profile'];g=copy.deepcopy(settings['generation']);g.setdefault('controls',{}).update(profile.get('rules',{}).get('controls',{}));g['max_events']=profile.get('rules',{}).get('max_events',100)
     g['engine_ref']=settings['engine_ref'];g['model_version']={'id':model['id'] if model else None,'profile_id':profile['id'],'profile_revision':profile.get('revision',0)}
     parent=parent or plan_composition(snapshot,seed,request.get('seconds',36),g,context=profile['id'])
-    parent=copy.deepcopy(parent);parent['locks']=request.get('locks',parent['locks']);parent.pop('plan_id',None);parent['plan_id']=digest(parent)
+    parent=copy.deepcopy(parent);parent['output_sample_rate']=request.get('wave_rate',parent.get('output_sample_rate',48000));parent['locks']=request.get('locks',parent['locks']);parent.pop('plan_id',None);parent['plan_id']=digest(parent)
     actions=request.get('actions') or None
     plans=proposals(parent,snapshot,seed,locks=parent['locks'],actions=actions,limit=3,rules=profile.get('rules',{}),targets=request.get('targets'))
     if len(plans)<2:raise ValueError('No allowed variation remains. Change a decision or the explicit locks.')
@@ -64,16 +64,19 @@ def experiment(snapshot,cache,folder,request,settings,model=None,parent=None):
     # It never compresses within-version dynamics. These audition gains are explicit.
     rms=[float(np.sqrt(np.mean(r['audio']**2))) for r in rows];target=min([v for v in rms if v>1e-9] or [.01]);gains=[min(4,target/max(v,1e-9)) for v in rms]
     peak=max(float(np.max(np.abs(r['audio'])))*gain for r,gain in zip(rows,gains));safety=min(1,.85/max(peak,1e-9));gains=[gain*safety for gain in gains]
-    candidates=[];clips={c['id']:c for c in snapshot['clips']}
+    candidates=[];stem_files={};clips={c['id']:c for c in snapshot['clips']}
     save_json(folder/'snapshot.json',snapshot)
     for i,(row,gain) in enumerate(zip(rows,gains)):
         p=row['plan'];prefix=f'c{i}';audio=row['audio'];report=row['report'];report['replay']={'engine_ref':settings['engine_ref'],'code_hash':digest({f.name:file_hash(f) for f in sorted((ROOT/'music').glob('*.py'))}),'model_id':model['id'] if model else None,'config':g,'runtime':{'numpy':np.__version__,'python':__import__('platform').python_version()}}
-        save_json(folder/(prefix+'-plan.json'),p);encode(audio,p['sample_rate'],folder/(prefix+'.wav'),True);encode(audio*gain,p['sample_rate'],folder/(prefix+'.mp3'))
+        save_json(folder/(prefix+'-plan.json'),p);encode(audio,p['sample_rate'],folder/(prefix+'.wav'),True,p['output_sample_rate']);encode(audio*gain,p['sample_rate'],folder/(prefix+'.mp3'))
         stem_map={}
         for j,e in enumerate(p['events']):
             names={}
             for mode in ('wet','dry','source'):
-                sound=render_event(e,clips,cache,p['sample_rate'],processed={'wet':True,'dry':'dry','source':False}[mode]);name=f'{prefix}-e{j}-{mode}.mp3';encode(sound,p['sample_rate'],folder/name);names[mode]=name
+                sound=render_event(e,clips,cache,p['sample_rate'],processed={'wet':True,'dry':'dry','source':False}[mode]);name=f'{prefix}-e{j}-{mode}.mp3';encode(sound,p['sample_rate'],folder/name);checksum=file_hash(folder/name)
+                if checksum in stem_files:(folder/name).unlink();name=stem_files[checksum]
+                else:stem_files[checksum]=name
+                names[mode]=name
             stem_map[e['event_id']]=names
         report.update(stems=stem_map,audition_gain=gain,audition_method='static broadband RMS match with shared peak ceiling; no compression; raw WAV retained',model=decision,source_snapshot=snapshot['id'])
         save_json(folder/(prefix+'-report.json'),report)
@@ -103,9 +106,14 @@ def cloud_task(cloud,task_id):
             result={'model':model,'files':files}
         else:
             cache=ROOT/'.cache/audio';parent=None;expected_parent_hash=None
-            if task.get('parent'):
+            if task.get('parent_daily'):
+                origin=task['parent_daily'];manifest=task['source_manifest'];blob=cloud.api('/internal/permanent/snapshots/'+origin['album']+'.json');snapshot=json.loads(blob) if isinstance(blob,bytes) else blob
+                score=json.loads(cloud.download_generated(origin['album'],'score.json',manifest['assets']['score.json']));track=next(t for t in score['tracks'] if t['n']==origin['track']);parent=track.get('plan')
+                if not parent:raise ValueError('Legacy summary has no composition plan')
+                expected_parent_hash=manifest['assets'][next(t for t in manifest['tracks'] if t['n']==origin['track'])['wav']]['sha256'];task['wave_rate']=48000;cloud.restore_snapshot(snapshot,cache)
+            elif task.get('parent'):
                 origin=task['parent'];parent_task=cloud.api('/internal/studio/task/'+origin['task']);expected_parent_hash=next(c['audio_hash'] for c in parent_task['result']['candidates'] if c['id']==origin['candidate']);blob=cloud.api(f'/internal/permanent/lab/{origin["task"]}/snapshot.json');snapshot=json.loads(blob) if isinstance(blob,bytes) else blob
-                blob=cloud.api(f'/internal/permanent/lab/{origin["task"]}/{origin["prefix"]}-plan.json');parent=json.loads(blob) if isinstance(blob,bytes) else blob
+                blob=cloud.api(f'/internal/permanent/lab/{origin["task"]}/{origin["prefix"]}-plan.json');parent=json.loads(blob) if isinstance(blob,bytes) else blob;task['wave_rate']=parent.get('output_sample_rate',32000)
                 cloud.restore_snapshot(snapshot,cache)
             else:snapshot=cloud.material_snapshot(task,cache)
             result=experiment(snapshot,cache,folder,task,task['config'],task.get('model'),parent)

@@ -41,6 +41,11 @@ try{
  await get('/api/studio/feedback/'+f.id,'PUT',{revision:f.revision,choice:'A',confirmed:true,revoked:true});state=await get('/api/studio/state');assert.equal(state.profiles[0].active_model,null);
  assert.equal((await call('/api/studio/profiles/open','PUT',{revision:state.profiles[0].revision,model:model.id})).status,409);await get('/api/studio/profiles/open','PUT',{revision:state.profiles[0].revision,model:model.id,confirm_historical:true});
  for(const choice of ['both','neither','unknown','technical']){const c=await get('/api/studio/compare','POST',{task:t.id,first:fixture.candidates[0].id,second:fixture.candidates[1].id});const f=await get('/api/studio/feedback','POST',{comparison:c.id,choice,confirmed:true});assert.equal(f.choice,choice);}
+ state=await get('/api/studio/state');const beforeRules=state.profiles[0];
+ const changedProfile=await get('/api/studio/profiles/open','PUT',{revision:beforeRules.revision,rules:{controls:{bit_damage:0},preserve_channels:true}});
+ state=await get('/api/studio/state');assert.deepEqual(state.profile_history.find(p=>p.id==='open'&&p.revision===beforeRules.revision).rules,beforeRules.rules);
+ assert.equal((await call('/api/studio/profiles/open','PUT',{revision:changedProfile.revision,restore_revision:beforeRules.revision})).status,409);
+ const restored=await get('/api/studio/profiles/open','PUT',{revision:changedProfile.revision,restore_revision:beforeRules.revision,confirm_historical:true});assert.deepEqual(restored.rules,beforeRules.rules);assert.equal(restored.active_model,beforeRules.active_model);assert.ok(restored.revision>changedProfile.revision);
  const url=await mf.ready;mkdirSync('.state/qa-studio',{recursive:true});
  for(const [name,type,options]of [['chrome',chromium,{viewport:{width:1440,height:1100}}],['webkit-mobile',webkit,{...devices['iPhone 13']}]]){
    browser=await type.launch({headless:true,...(name==='chrome'?{channel:'chrome'}:{})});const ctx=await browser.newContext({...options,extraHTTPHeaders:{Authorization:'Bearer test-only-admin'}}),page=await ctx.newPage();const errors=[];page.on('pageerror',e=>errors.push(e.message));await page.goto(new URL('/admin',url).href);await page.locator('#studio-tasks button').filter({hasText:'打开试听'}).first().click();await page.locator('#event-targets .studio-event').first().waitFor();

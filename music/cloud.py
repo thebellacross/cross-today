@@ -170,7 +170,7 @@ class Cloud:
             if saved:
                 for c in saved['clips']:
                     target=cache/c['cache_file'];target.parent.mkdir(parents=True,exist_ok=True)
-                    data=self.api(f'/internal/cache/{key}/{c["id"]}.wav',missing=True)
+                    data=self.api(f'/internal/cache/{key}/{c["id"]}.wav?sha={c["cache_sha256"]}',missing=True)
                     if data is None:good=False;break
                     target.write_bytes(data)
                     if c.get('cache_sha256') and file_hash(target)!=c['cache_sha256']:good=False;break
@@ -196,7 +196,7 @@ class Cloud:
             target=cache/clip['cache_file'];target.parent.mkdir(parents=True,exist_ok=True)
             if target.exists() and file_hash(target)==clip['cache_sha256']:continue
             key=clip['cache_file'].split('/')[0]
-            data=self.api(f'/internal/cache/{key}/{clip["id"]}.wav',missing=True)
+            data=self.api(f'/internal/cache/{key}/{clip["id"]}.wav?sha={clip["cache_sha256"]}',missing=True)
             if data is None:raise RuntimeError('Retained derived material is unavailable; original recordings remain private.')
             target.write_bytes(data)
             if file_hash(target)!=clip['cache_sha256']:raise RuntimeError('Retained derived material checksum failed.')
@@ -229,7 +229,12 @@ class Cloud:
     def download_generated(self,job_id,name,meta):
         # Only a known generated Release asset, never an arbitrary client URL.
         if not re.fullmatch(r'album-\d{4}-\d{2}-\d{2}',job_id) or not re.fullmatch(r'[a-z0-9.-]+',name):raise ValueError('Invalid generated asset')
-        r=self.http.get(f'https://github.com/{self.repo}/releases/download/{job_id}/{name}',timeout=300);r.raise_for_status()
+        release=self.release(job_id)
+        if release and release.get('draft'):
+            assets=self.gh(f'/repos/{self.repo}/releases/{release["id"]}/assets?per_page=100');asset=next(a for a in assets if a['name']==name)
+            r=self.http.get(f'https://api.github.com/repos/{self.repo}/releases/assets/{asset["id"]}',headers={'Authorization':'Bearer '+self.gh_token,'Accept':'application/octet-stream'},timeout=300)
+        else:r=self.http.get(f'https://github.com/{self.repo}/releases/download/{job_id}/{name}',timeout=300)
+        if not r.ok:raise ServiceFailure('Generated asset','GET',r.status_code)
         if len(r.content)!=meta['bytes'] or hashlib.sha256(r.content).hexdigest()!=meta['sha256']:raise RuntimeError('Generated asset checksum mismatch')
         return r.content
     def select(self,selection_id):

@@ -22,7 +22,7 @@ function update(){
   $('play').classList.toggle('playing',!audio.paused);$('play').setAttribute('aria-label',audio.paused?'Play':'Pause');$('sticky-play').textContent=audio.paused?'▶':'Ⅱ';
   $('sticky').hidden=playerVisible||!engaged;
   document.querySelectorAll('.track-play').forEach((e,k)=>e.textContent=k===index&&!audio.paused?'Ⅱ':'▶');
-  if(score&&engaged){$('hearing').hidden=false;const events=score.tracks[index]?.events.filter(e=>position>=e.start&&position<e.start+e.duration&&e.gain>=.0158).sort((a,b)=>b.gain-a.gain)||[];const labels=[...new Set(events.map(e=>`${e.name} · ${e.technique}`))].slice(0,5);const text=labels.join('\n')||'between sounds';if($('heard').textContent!==text)$('heard').textContent=text;$('heard').style.whiteSpace='pre-line';}
+  if(score&&engaged){$('hearing').hidden=false;const events=score.tracks[index]?.events.filter(e=>position>=e.start&&position<(e.active_until??e.start+e.duration)&&e.gain>=.0158).sort((a,b)=>b.gain-a.gain)||[];const labels=[...new Set(events.map(e=>`${e.name} · ${e.technique}`))].slice(0,5);const text=labels.join('\n')||'between sounds';if($('heard').textContent!==text)$('heard').textContent=text;$('heard').style.whiteSpace='pre-line';}
   if('mediaSession'in navigator&&audio.duration&&Number.isFinite(audio.duration)){try{navigator.mediaSession.setPositionState({duration:audio.duration,position:Math.min(audio.currentTime,audio.duration),playbackRate:1});}catch{}}
 }
 function loop(){update();if(!audio.paused||drag)frame=requestAnimationFrame(loop);}

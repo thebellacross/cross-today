@@ -77,3 +77,10 @@ def test_zero_structure_randomness_cannot_be_reenabled_by_automatic_proposals(ma
     snapshot,cache,g,_=materials;p=plan_composition(snapshot,100,12,g)
     for candidate in proposals(p,snapshot,71):
         assert [(e['event_id'],e['start'],e['duration'],e['source_id']) for e in candidate['events']]==[(e['event_id'],e['start'],e['duration'],e['source_id']) for e in p['events']]
+
+def test_studio_wav_can_exactly_match_daily_release_encoding(materials,tmp_path):
+    from music.studio import encode
+    from music.common import run_audio
+    snapshot,cache,g,_=materials;p=plan_composition(snapshot,78,3,g);audio,_,_=render_plan(p,snapshot,cache)
+    raw=tmp_path/'daily.f32';raw.write_bytes(np.asarray(audio,dtype='<f4').tobytes());daily=tmp_path/'daily.wav';private=tmp_path/'private.wav'
+    run_audio(['-y','-f','f32le','-ar',g['sample_rate'],'-ac',2,'-i',raw,'-ar',48000,'-c:a','pcm_s24le','-fflags','+bitexact',daily]);encode(audio,g['sample_rate'],private,True,48000);assert file_hash(daily)==file_hash(private)

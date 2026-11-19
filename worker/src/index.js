@@ -195,7 +195,7 @@ export class Coordinator {
       // Public-safe configurable musical parameters only; authentication secrets are never accepted here.
       if(update.project_name!==undefined)cfg.project_name=String(update.project_name).slice(0,100)||null;
       if(update.generation){const g=update.generation;if(!['chance','fusion','loops','baseline','fontana','automaton','drift'].includes(g.form))return json({error:'Invalid form'},400);cfg.generation.form=g.form;for(const key of ['garble','stereo_width'])if(g[key]!==undefined){if(!Number.isFinite(g[key])||g[key]<0||g[key]>1)return json({error:'Musical amounts must be between 0 and 1.'},400);cfg.generation[key]=g[key];}if(g.controls){for(const [key,value]of Object.entries(g.controls)){if(!Object.hasOwn(defaults.generation.controls,key)||!Number.isFinite(value)||value<0||value>1)return json({error:'Unknown control or invalid value'},400);cfg.generation.controls[key]=value;}}if(g.daily_parameters!==undefined)cfg.generation.daily_parameters=!!g.daily_parameters;}
-      if(update.import){const s=update.import;if(!(s.segment_seconds>=1&&s.segment_seconds<=600&&s.overlap_seconds>=0&&s.overlap_seconds<s.segment_seconds))return json({error:'Invalid segment settings'},400);cfg.import.segment_seconds=s.segment_seconds;cfg.import.overlap_seconds=s.overlap_seconds;}
+      if(update.import){const s=update.import;if(!(s.segment_seconds>=1&&s.segment_seconds<=240&&s.overlap_seconds>=0&&s.overlap_seconds<s.segment_seconds))return json({error:'Invalid segment settings'},400);cfg.import.segment_seconds=s.segment_seconds;cfg.import.overlap_seconds=s.overlap_seconds;}
       if(update.schedule){for(const key of ['prepare_hour','publish_hour'])if(update.schedule[key]!==undefined){if(!Number.isInteger(update.schedule[key])||update.schedule[key]<0||update.schedule[key]>23)return json({error:'Schedule hours must be 0–23.'},400);cfg.schedule[key]=update.schedule[key];}}
       if(update.series){if(update.series.random_end!==undefined)cfg.series.random_end=!!update.series.random_end;if(update.series.keep_releases!==undefined){if(!Number.isInteger(update.series.keep_releases)||update.series.keep_releases<1||update.series.keep_releases>30)return json({error:'Retain between 1 and 30 daily editions.'},400);cfg.series.keep_releases=update.series.keep_releases;}}
       await this.store.put('config',cfg);await this.store.put('config-revision',revision+1);return json({ok:true,revision:revision+1});});
@@ -307,8 +307,17 @@ export class Coordinator {
     }
     if((match=p.match(/^\/internal\/cache\/([0-9a-f]{64})\/(manifest\.json|[0-9a-f]{64}\.wav)$/))) {
       const key=`derived/${match[1]}/${match[2]}`;
-      if(method==='PUT'){await this.sources.put(key,request.body);return json({ok:true});}
-      if(['GET','HEAD'].includes(method))return privateObject(this.sources,key,request,match[2]);
+      if(method==='PUT'){
+        const data=await request.arrayBuffer(),prior=match[2].endsWith('.wav')&&await this.sources.head(key);
+        if(prior&&prior.sha256!==await hash(data))return json({error:'This derived audio identity already has different bytes. Keep its version or use a new adapter profile.'},409);
+        await this.sources.put(key,data);return json({ok:true});
+      }
+      if(['GET','HEAD'].includes(method)){
+        const checksum=url.searchParams.get('sha');if(checksum&&!safeHash(checksum))return json({error:'Invalid checksum'},400);
+        const bucket=checksum&&this.sources.version?await this.sources.version(key,checksum):this.sources;
+        if(checksum&&!this.sources.version&&(await bucket.head(key))?.sha256!==checksum)return json({error:'Historical derived version unavailable'},404);
+        return privateObject(bucket,key,request,match[2]);
+      }
     }
     if(p==='/internal/storage/write'&&method==='POST'){await reserveWrite(this);return json({ok:true});}
     if(p==='/internal/storage/register'&&method==='POST') {
@@ -342,7 +351,7 @@ export class Coordinator {
     if((match=p.match(/^\/internal\/exports\/([0-9a-f-]{36})$/))) {const e=await this.store.get('export:'+match[1]);if(!e)return json({error:'Not found'},404);if(method==='GET')return json(e);if(method==='POST'){const b=await body();const files=b.files||['release.zip'];if(b.status!=='failed'){if(!Array.isArray(files)||!files.length||files.length>9999||new Set(files).size!==files.length||files.some(f=>!/^release(?:-\d{2,4})?\.zip$/.test(f)))return json({error:'Invalid export volumes'},400);for(const f of files)if(!await this.permanent.head(`exports/${e.id}/${f}`))return json({error:'Export incomplete'},409);}return this.atomic(async()=>{const latest=await this.store.get('export:'+e.id);if(latest.status==='ready')return json({ok:true});latest.status=b.status==='failed'?'failed':'ready';if(latest.status==='ready')latest.files=files;latest.lease_until=0;latest.retry_after=Date.now()+15*60000;await this.store.put('export:'+e.id,latest);return json({ok:true});});}}
     if(p==='/internal/cleanup') {
       return this.atomic(async()=>{
-        const cfg=await this.config();const pins=new Set((await this.list('selection:')).filter(x=>x.status!=='ready').map(x=>x.album));
+        const cfg=await this.config();const pins=new Set([...(await this.list('selection:')).filter(x=>x.status!=='ready').map(x=>x.album),...(await this.list('studio-task:')).filter(t=>t.status!=='ready'&&t.parent_daily).map(t=>t.parent_daily.album)]);
         if(method==='GET'){const jobs=await this.list('job:');return json([...eligibleForCleanup(jobs,await this.store.get('current'),pins,cfg.series.keep_releases),...jobs.filter(j=>j.status==='retired'&&!j.release_deleted)].map(j=>j.id));}
         if(method==='POST'){const {id:jobId,deleted}=await body();const j=await this.store.get('job:'+jobId);const eligible=eligibleForCleanup(await this.list('job:'),await this.store.get('current'),pins,cfg.series.keep_releases);if(!eligible.find(j=>j.id===jobId)&&j?.status!=='retired')return json({error:'Album is pinned or current'},409);j.status='retired';if(deleted)j.release_deleted=true;await this.store.put('job:'+jobId,j);const c=await this.store.get('catalog:'+jobId);if(c){c.available=false;await this.store.put('catalog:'+jobId,c);}return json({ok:true});}
       });

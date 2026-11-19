@@ -122,9 +122,9 @@ def main():
     # Wait for the additive upgrade endpoint; do not reset active imports to speed deployment up.
     deadline=time.monotonic()+360
     while True:
-        upgrade=requests.post(worker+'/internal/config/upgrade',headers={'Authorization':'Bearer '+values['RUN_TOKEN']},json={},timeout=45)
-        if upgrade.ok:break
-        if upgrade.status_code not in (404,500,502,503,504) or time.monotonic()>=deadline:raise RuntimeError('Worker version promotion failed; existing job snapshots remain unchanged.')
+        upgrade=requests.post(worker+'/internal/config/upgrade',headers={'Authorization':'Bearer '+values['RUN_TOKEN']},json={'engine_ref':cfg['engine_ref']},timeout=45)
+        if upgrade.ok and upgrade.json().get('engine_ref')==cfg['engine_ref'] and upgrade.json().get('listening_transport')=='private-transport-1':break
+        if (not upgrade.ok and upgrade.status_code not in (404,409,500,502,503,504)) or time.monotonic()>=deadline:raise RuntimeError('Worker version promotion failed; existing job snapshots remain unchanged.')
         print('Waiting for the active coordinator to adopt the deployed version.',flush=True);time.sleep(15)
     if api('/repos/'+repo+'/pages',allow=[404]) is None:api('/repos/'+repo+'/pages','POST',{'build_type':'workflow'})
     api('/repos/'+repo+'/actions/workflows/pages.yml/dispatches','POST',{'ref':'main'})

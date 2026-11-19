@@ -21,6 +21,9 @@ const call=async(path,method='GET',body,role='admin',headers={})=>{
 const jcall=async(...args)=>{const r=await call(...args);const j=await r.json();assert.ok(r.ok,JSON.stringify({path:args[0],status:r.status,data:j}));return j;};
 try{
   assert.equal((await call('/api/state','GET',undefined,null)).status,401);
+  const initialEngine=(await jcall('/api/state')).config.engine_ref;
+  assert.equal((await call('/internal/config/upgrade','POST',{engine_ref:'engine-not-deployed'},'run')).status,409);assert.equal((await jcall('/api/state')).config.engine_ref,initialEngine);
+  assert.equal((await jcall('/internal/config/upgrade','POST',{engine_ref:initialEngine},'run')).engine_ref,initialEngine);
   assert.equal((await call('/api/login','POST',{password:'test-only-admin'},null,{Origin:'https://evil.example'})).status,403);
   const login=await call('/api/login','POST',{password:'test-only-admin'},null);assert.equal(login.status,200);const cookie=login.headers.get('Set-Cookie');assert.match(cookie,/HttpOnly/);assert.match(cookie,/Secure/);
   assert.equal((await call('/api/state','GET',undefined,null,{Cookie:cookie})).status,200);

@@ -1,0 +1,44 @@
+name: Private CROSS listening
+on:
+  workflow_dispatch:
+    inputs:
+      job:
+        type: string
+        required: true
+      engine_ref:
+        type: string
+        required: true
+permissions:
+  contents: read
+concurrency:
+  group: bellacross-studio-${{ inputs.job }}
+  cancel-in-progress: false
+jobs:
+  listening:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 115
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: coordinator
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          path: engine
+          ref: ${{ inputs.engine_ref }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install the frozen engine dependencies
+        run: python -m pip install -r engine/requirements.txt
+      - name: Run frozen listening task with recoverable transport
+        env:
+          WORKER_URL: ${{ vars.WORKER_URL }}
+          RUN_TOKEN: ${{ secrets.RUN_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          STORAGE_REPOSITORY: ${{ secrets.STORAGE_REPOSITORY }}
+          STORAGE_TOKEN: ${{ secrets.STORAGE_TOKEN }}
+          JOB: ${{ inputs.job }}
+          ENGINE_REF: ${{ inputs.engine_ref }}
+        run: python coordinator/scripts/listening_runner.py --job "$JOB" --engine-ref "$ENGINE_REF" --engine-root "$GITHUB_WORKSPACE/engine"

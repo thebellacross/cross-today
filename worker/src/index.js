@@ -90,7 +90,9 @@ export class Coordinator {
   async list(prefix){return [...(await this.store.list({prefix})).values()];}
   async dispatch(mode,jobId) {
     const job=await this.store.get('job:'+jobId);const ref=mode==='studio'?(await this.store.get('studio-task:'+jobId))?.config?.engine_ref||'main':mode==='render'?(job?.config?.engine_ref||'main'):'main';
-    const r=await fetch(`https://api.github.com/repos/${this.env.GITHUB_REPOSITORY}/actions/workflows/daily.yml/dispatches`,{method:'POST',headers:{Authorization:`Bearer ${this.env.GITHUB_TOKEN}`,Accept:'application/vnd.github+json','User-Agent':'cross-today','Content-Type':'application/json'},body:JSON.stringify({ref,inputs:{mode,job:jobId}})});
+    const workflow=mode==='studio'?'listening.yml':'daily.yml';
+    const payload=mode==='studio'?{ref:'main',inputs:{job:jobId,engine_ref:ref}}:{ref,inputs:{mode,job:jobId}};
+    const r=await fetch(`https://api.github.com/repos/${this.env.GITHUB_REPOSITORY}/actions/workflows/${workflow}/dispatches`,{method:'POST',headers:{Authorization:`Bearer ${this.env.GITHUB_TOKEN}`,Accept:'application/vnd.github+json','User-Agent':'cross-today','Content-Type':'application/json'},body:JSON.stringify(payload)});
     if(!r.ok)throw new Error('GitHub dispatch failed');
   }
   async ensure(day,publish=false,manual=false) {
@@ -156,6 +158,7 @@ export class Coordinator {
     }
     if(p==='/api/logout'&&method==='POST')return json({ok:true},200,{'Set-Cookie':'bc_session=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0'});
     if(p==='/internal/config/upgrade'&&method==='POST') {
+      const expected=(await body()).engine_ref;if(expected&&expected!==defaults.engine_ref)return json({error:'Coordinator has not adopted the requested engine version yet.',engine_ref:defaults.engine_ref},409);
       return this.atomic(async()=>{const cfg=await this.config();const before=cfg.engine_ref;let changed=false;
         for(const key of ['engine_ref','artist','credits','github_owner','repository','worker_url','site_url','reference','storage'])if(JSON.stringify(cfg[key])!==JSON.stringify(defaults[key])){cfg[key]=structuredClone(defaults[key]);changed=true;}
         if(defaults.generation.renderer==='composition'&&cfg.generation.renderer!=='composition'){
@@ -164,7 +167,7 @@ export class Coordinator {
           cfg.import.channels='preserve';cfg.preference_profile='open';changed=true;
         }
         if(changed){await this.store.put('config',cfg);await this.store.put('config-revision',(await this.store.get('config-revision')||0)+1);await this.store.put('config-upgrade:'+id(),{before,after:cfg.engine_ref,time:Date.now()});}
-        return json({ok:true,engine_ref:cfg.engine_ref,changed});});
+        return json({ok:true,engine_ref:cfg.engine_ref,listening_transport:'private-transport-1',changed});});
     }
     if(p==='/public/current'){const current=await this.store.get('current');return json(publicAlbum(current,origin),current?200:404);}
     if(p.startsWith('/public/album/')){const jobId=p.slice('/public/album/'.length);if(!/^album-\d{4}-\d{2}-\d{2}$/.test(jobId))return json({error:'Not found'},404);const j=await this.store.get('job:'+jobId);return j?.status==='published'?json(publicAlbum(j.album,origin)):json({error:'Edition unavailable'},404);}

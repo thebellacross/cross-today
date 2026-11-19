@@ -98,7 +98,11 @@ def constrain(plan,rules):
     return plan
 
 def proposals(parent,snapshot,seed,locks=None,actions=None,limit=3,rules=None,targets=None):
-    rows=[parent];r=rng_for(seed,'proposal-order');actions=actions or list(r.permutation(ACTIONS));targets=[e['event_id'] for e in parent['events'] if (targets is None or e['event_id'] in targets) and e['event_id'] not in (locks or parent['locks']).get('events',[])]
+    rows=[parent];r=rng_for(seed,'proposal-order')
+    if actions is None:
+        automatic=ACTIONS if parent['controls']['structure_randomness'] else ['processing','space']
+        actions=list(r.permutation(automatic))
+    targets=[e['event_id'] for e in parent['events'] if (targets is None or e['event_id'] in targets) and e['event_id'] not in (locks or parent['locks']).get('events',[])]
     for action in actions:
         for target in list(r.permutation(targets)):
             try:p=constrain(mutate(parent,action,target,seed,snapshot,locks),rules or {})

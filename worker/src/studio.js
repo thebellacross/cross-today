@@ -81,7 +81,7 @@ export async function handleStudio(c,request,{json,privateObject,PublicError}) {
   if((m=path.match(/^\/internal\/studio\/tasks\/([\w-]+)\/(claim|ready|failed)$/))&&method==='POST'){
     const b=await read(),id=m[1],action=m[2];
     if(action==='ready'){
-      const t=await c.store.get('studio-task:'+id);if(!t||b.run!==t.run)fail('任务租约不匹配。',409);if(!b.result?.files||!Object.keys(b.result.files).length)fail('资产清单缺失。');
+      const t=await c.store.get('studio-task:'+id);if(!t||b.run!==t.run)fail('任务租约不匹配。',409);if(!b.result?.files||!Object.keys(b.result.files).length)fail('资产清单缺失。');if(t.kind==='render'&&b.result.engine_ref!==t.config.engine_ref)fail('生成引擎版本不一致。',409);
       for(const [name,meta]of Object.entries(b.result.files)){if(!/^[a-z0-9.-]+$/.test(name))fail('文件名无效。');const head=await c.permanent.head(`lab/${id}/${name}`);if(!head||head.sha256!==meta.sha256||head.size!==meta.bytes)fail('私有文件校验未完成。',409);}
     }
     return c.atomic(async()=>{const t=await c.store.get('studio-task:'+id);if(!t)fail('任务不存在。',404);if(action==='claim'){

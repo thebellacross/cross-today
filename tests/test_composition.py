@@ -71,3 +71,9 @@ def test_grouped_bootstrap_ranking_changes_in_opposite_contexts():
     assert rank(pairs[0],model,allow_simulated=True)[0]['id']=='B';assert rank(pairs[1],model,allow_simulated=True)[0]['id']=='A'
     assert rank(pairs[0],None)[0]['id']=='A';assert model['families']==6 and model['evaluation']['test_families']
     assert all(r['bootstrap_logit_sd'] is not None for r in rank(pairs[1],model,allow_simulated=True))
+
+
+def test_zero_structure_randomness_cannot_be_reenabled_by_automatic_proposals(materials):
+    snapshot,cache,g,_=materials;p=plan_composition(snapshot,100,12,g)
+    for candidate in proposals(p,snapshot,71):
+        assert [(e['event_id'],e['start'],e['duration'],e['source_id']) for e in candidate['events']]==[(e['event_id'],e['start'],e['duration'],e['source_id']) for e in p['events']]

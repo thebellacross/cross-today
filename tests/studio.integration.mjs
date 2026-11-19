@@ -23,9 +23,9 @@ try{
  const u=await get('/api/uploads/begin','POST',{hash,bytes:data.length,name:'Snaredrum.wav',extension:'.wav'});
  await mf.dispatchFetch(`https://example.test/api/uploads/${u.id}/part?n=1`,{method:'PUT',headers:{Authorization:'Bearer test-only-admin'},body:data});await get(`/api/uploads/${u.id}/complete`,'POST',{});
  const request={request_id:'render-fixture',profile_id:'open',seconds:24,source_hashes:[hash]};const t=await get('/api/studio/render','POST',request);assert.equal((await get('/api/studio/render','POST',request)).id,t.id);assert.equal(github.dispatches,1);
- const claimed=await get(`/internal/studio/tasks/${t.id}/claim`,'POST',{run:'fixture'},'run');assert.equal(claimed.config.engine_ref,'engine-v9');assert.equal((await call(`/internal/studio/tasks/${t.id}/claim`,'POST',{run:'stale'},'run')).status,409);
+ const claimed=await get(`/internal/studio/tasks/${t.id}/claim`,'POST',{run:'fixture'},'run');assert.equal(claimed.config.engine_ref,JSON.parse(readFileSync('config.json')).engine_ref);assert.equal((await call(`/internal/studio/tasks/${t.id}/claim`,'POST',{run:'stale'},'run')).status,409);
  const files=Object.fromEntries(Object.keys(fixture.files).map(name=>[name,readFileSync(fixtureDir+'/'+name)]));const metas=await retain(t.id,files);
- await get(`/internal/studio/tasks/${t.id}/ready`,'POST',{run:'fixture',result:{...fixture,files:metas}},'run');
+ await get(`/internal/studio/tasks/${t.id}/ready`,'POST',{run:'fixture',result:{...fixture,engine_ref:claimed.config.engine_ref,files:metas}},'run');
  assert.equal((await mf.dispatchFetch(`https://example.test/api/studio/media/${t.id}/c0.mp3`)).status,401);assert.equal((await mf.dispatchFetch(`https://example.test/media/${t.id}/c0.mp3`)).status,404);
  const audio=await call(`/api/studio/media/${t.id}/c0.mp3`,'GET',undefined,'admin',{Range:'bytes=0-31'});assert.equal(audio.status,206);assert.equal(audio.headers.get('Cache-Control'),'private, no-store');assert.equal((await audio.arrayBuffer()).byteLength,32);
  const comparison=await get('/api/studio/compare','POST',{task:t.id,first:fixture.candidates[0].id,second:fixture.candidates[1].id,scope:{kind:'whole'}});

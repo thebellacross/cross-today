@@ -41,7 +41,16 @@ class Cloud:
         self.http=requests.Session();self.http.mount('https://',HTTPAdapter(max_retries=Retry(total=4,backoff_factor=2,status_forcelist=[429,500,502,503,504],allowed_methods=frozenset(['GET','HEAD','PUT']))))
     def api(self,path,method='GET',data=None,raw=None,missing=False):
         headers={'Authorization':'Bearer '+self.run_token}
-        r=self.http.request(method,self.base+path,headers=headers,json=data if raw is None else None,data=raw,timeout=300)
+        for attempt in range(4):
+            try:
+                r=self.http.request(method,self.base+path,headers=headers,json=data if raw is None else None,data=raw,timeout=300)
+                break
+            except (requests.exceptions.ChunkedEncodingError,requests.exceptions.ConnectionError,requests.exceptions.Timeout):
+                # urllib3 retries status responses, but a truncated streamed body
+                # can fail after that layer has returned. Retry read-only requests
+                # with the same snapshot URL; never duplicate a POST mutation.
+                if method not in ('GET','HEAD') or attempt==3:raise
+                time.sleep(2**attempt)
         if missing and r.status_code==404:return None
         if not r.ok:raise ServiceFailure('Private service',method,r.status_code,r.headers.get('Retry-After',0))
         return r.json() if 'application/json' in r.headers.get('Content-Type','') else r.content

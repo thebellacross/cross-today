@@ -8,6 +8,30 @@ import pytest
 from music.album import download_archives
 from music.cloud import Cloud, failure_diagnostic, ServiceFailure
 
+@pytest.mark.parametrize('method,attempts',[('GET',3),('POST',1)])
+def test_truncated_private_reads_retry_without_duplicating_writes(monkeypatch,method,attempts):
+    import requests
+    from types import SimpleNamespace
+    cloud=Cloud.__new__(Cloud);cloud.base='https://example.test';cloud.run_token='test-only';seen=[]
+    def request(verb,url,**kwargs):
+        seen.append((verb,url))
+        if len(seen)<=2:raise requests.exceptions.ChunkedEncodingError('simulated truncated body')
+        return SimpleNamespace(ok=True,status_code=200,headers={},content=b'complete snapshot bytes')
+    cloud.http=SimpleNamespace(request=request);monkeypatch.setattr('music.cloud.time.sleep',lambda _:None)
+    if method=='GET':assert cloud.api('/internal/cache/frozen',method)==b'complete snapshot bytes'
+    else:
+        with pytest.raises(requests.exceptions.ChunkedEncodingError):cloud.api('/internal/cache/frozen',method)
+    assert seen==[(method,'https://example.test/internal/cache/frozen')]*attempts
+
+def test_private_read_transport_retry_is_bounded(monkeypatch):
+    import requests
+    from types import SimpleNamespace
+    cloud=Cloud.__new__(Cloud);cloud.base='https://example.test';cloud.run_token='test-only';seen=[]
+    def request(*args,**kwargs):seen.append(1);raise requests.exceptions.Timeout('simulated timeout')
+    cloud.http=SimpleNamespace(request=request);monkeypatch.setattr('music.cloud.time.sleep',lambda _:None)
+    with pytest.raises(requests.exceptions.Timeout):cloud.api('/internal/cache/frozen')
+    assert len(seen)==4
+
 def test_public_failure_diagnostic_never_includes_private_error_text():
     try:
         raise ValueError('/private/recording.wav https://private.invalid?token=secret')

@@ -1,3 +1,4 @@
+import {handleStudio,preferenceSnapshot,dispatchStudio} from './studio.js';
 import {SignJWT, jwtVerify} from 'jose';
 import defaults from '../../config.json';
 import {GitHubBucket, reserveWrite} from './storage.js';
@@ -72,7 +73,7 @@ export default {
         return stub.fetch(request);
       }
       if(path==='/'||path==='/admin')url.pathname='/admin.html';
-      if(!['/admin.html','/admin.js','/admin.css','/artist.json','/vendor/hash.js'].includes(url.pathname)&&!url.pathname.startsWith('/assets/artist/'))return new Response('Not found',{status:404});
+      if(!['/admin.html','/admin.js','/admin.css','/studio.js','/artist.json','/vendor/hash.js'].includes(url.pathname)&&!url.pathname.startsWith('/assets/artist/'))return new Response('Not found',{status:404});
       return secured(await env.ASSETS.fetch(new Request(url,request)));
     } catch (error) { return json({error:error.publicMessage||'The service could not complete this request. Previous published audio is unchanged.'},error.status||500,error.retryAfter?{'Retry-After':String(error.retryAfter)}:{}); }
   },
@@ -88,7 +89,7 @@ export class Coordinator {
   async config(){return structuredClone(await this.store.get('config')||defaults);}
   async list(prefix){return [...(await this.store.list({prefix})).values()];}
   async dispatch(mode,jobId) {
-    const job=await this.store.get('job:'+jobId);const ref=mode==='render'?(job?.config?.engine_ref||'main'):'main';
+    const job=await this.store.get('job:'+jobId);const ref=mode==='studio'?(await this.store.get('studio-task:'+jobId))?.config?.engine_ref||'main':mode==='render'?(job?.config?.engine_ref||'main'):'main';
     const r=await fetch(`https://api.github.com/repos/${this.env.GITHUB_REPOSITORY}/actions/workflows/daily.yml/dispatches`,{method:'POST',headers:{Authorization:`Bearer ${this.env.GITHUB_TOKEN}`,Accept:'application/vnd.github+json','User-Agent':'cross-today','Content-Type':'application/json'},body:JSON.stringify({ref,inputs:{mode,job:jobId}})});
     if(!r.ok)throw new Error('GitHub dispatch failed');
   }
@@ -107,7 +108,7 @@ export class Coordinator {
         const number=(await this.store.get('next-number'))??config.series.first_number;
         const seed=String(BigInt('0x'+crypto.randomUUID().replaceAll('-','').slice(0,15)));
         const odds=Math.max(1,config.series.last_odds+1-number);const endDraw=crypto.getRandomValues(new Uint32Array(1))[0]/2**32;
-        j={id:jobId,day,number,seed,config,final_decision:config.series.random_end&&endDraw<1/odds,sources:sources.map(({hash,name,tags,extension,bytes})=>({hash,name,tags,extension,bytes})),status:'queued',attempts:0,publish,created:now};
+        j={id:jobId,day,number,seed,config,preference:await preferenceSnapshot(this),final_decision:config.series.random_end&&endDraw<1/odds,sources:sources.map(({hash,name,tags,extension,bytes})=>({hash,name,tags,extension,bytes})),status:'queued',attempts:0,publish,created:now};
         await this.store.put('next-number',number+1);
       }
       if(manual&&j.status==='failed'){j.attempts=0;j.retry_after=0;}
@@ -132,6 +133,7 @@ export class Coordinator {
   async handle(request) {
     const url=new URL(request.url),p=url.pathname,method=request.method,origin=url.origin;
     const body=async()=>request.json();
+    const studio=await handleStudio(this,request,{json,privateObject,PublicError});if(studio)return studio;
     if(p==='/api/login-link'&&method==='POST') {
       const code=Array.from(crypto.getRandomValues(new Uint8Array(32)),b=>b.toString(16).padStart(2,'0')).join('');
       await this.store.put('handoff:'+await hash(encoder.encode(code)),{expires:Date.now()+120000});
@@ -156,6 +158,11 @@ export class Coordinator {
     if(p==='/internal/config/upgrade'&&method==='POST') {
       return this.atomic(async()=>{const cfg=await this.config();const before=cfg.engine_ref;let changed=false;
         for(const key of ['engine_ref','artist','credits','github_owner','repository','worker_url','site_url','reference','storage'])if(JSON.stringify(cfg[key])!==JSON.stringify(defaults[key])){cfg[key]=structuredClone(defaults[key]);changed=true;}
+        if(defaults.generation.renderer==='composition'&&cfg.generation.renderer!=='composition'){
+          await this.store.put('legacy-config:'+id(),structuredClone(cfg));cfg.generation.renderer='composition';cfg.generation.candidate_count=defaults.generation.candidate_count;
+          cfg.generation.controls={...defaults.generation.controls,dropout_probability:cfg.generation.garble||0,stereo_width:cfg.generation.stereo_width??1};
+          cfg.import.channels='preserve';cfg.preference_profile='open';changed=true;
+        }
         if(changed){await this.store.put('config',cfg);await this.store.put('config-revision',(await this.store.get('config-revision')||0)+1);await this.store.put('config-upgrade:'+id(),{before,after:cfg.engine_ref,time:Date.now()});}
         return json({ok:true,engine_ref:cfg.engine_ref,changed});});
     }
@@ -187,7 +194,7 @@ export class Coordinator {
       const update=await body();return this.atomic(async()=>{const revision=await this.store.get('config-revision')||0;if(update.revision!==revision)return json({error:'Settings changed in another session. Refresh before saving.'},409);const cfg=await this.config();
       // Public-safe configurable musical parameters only; authentication secrets are never accepted here.
       if(update.project_name!==undefined)cfg.project_name=String(update.project_name).slice(0,100)||null;
-      if(update.generation){const g=update.generation;if(!['chance','fusion','loops','baseline','fontana','automaton','drift'].includes(g.form))return json({error:'Invalid form'},400);cfg.generation.form=g.form;for(const key of ['garble','stereo_width'])if(g[key]!==undefined){if(!Number.isFinite(g[key])||g[key]<0||g[key]>1)return json({error:'Musical amounts must be between 0 and 1.'},400);cfg.generation[key]=g[key];}if(g.daily_parameters!==undefined)cfg.generation.daily_parameters=!!g.daily_parameters;}
+      if(update.generation){const g=update.generation;if(!['chance','fusion','loops','baseline','fontana','automaton','drift'].includes(g.form))return json({error:'Invalid form'},400);cfg.generation.form=g.form;for(const key of ['garble','stereo_width'])if(g[key]!==undefined){if(!Number.isFinite(g[key])||g[key]<0||g[key]>1)return json({error:'Musical amounts must be between 0 and 1.'},400);cfg.generation[key]=g[key];}if(g.controls){for(const [key,value]of Object.entries(g.controls)){if(!Object.hasOwn(defaults.generation.controls,key)||!Number.isFinite(value)||value<0||value>1)return json({error:'Unknown control or invalid value'},400);cfg.generation.controls[key]=value;}}if(g.daily_parameters!==undefined)cfg.generation.daily_parameters=!!g.daily_parameters;}
       if(update.import){const s=update.import;if(!(s.segment_seconds>=1&&s.segment_seconds<=600&&s.overlap_seconds>=0&&s.overlap_seconds<s.segment_seconds))return json({error:'Invalid segment settings'},400);cfg.import.segment_seconds=s.segment_seconds;cfg.import.overlap_seconds=s.overlap_seconds;}
       if(update.schedule){for(const key of ['prepare_hour','publish_hour'])if(update.schedule[key]!==undefined){if(!Number.isInteger(update.schedule[key])||update.schedule[key]<0||update.schedule[key]>23)return json({error:'Schedule hours must be 0–23.'},400);cfg.schedule[key]=update.schedule[key];}}
       if(update.series){if(update.series.random_end!==undefined)cfg.series.random_end=!!update.series.random_end;if(update.series.keep_releases!==undefined){if(!Number.isInteger(update.series.keep_releases)||update.series.keep_releases<1||update.series.keep_releases>30)return json({error:'Retain between 1 and 30 daily editions.'},400);cfg.series.keep_releases=update.series.keep_releases;}}
@@ -198,7 +205,7 @@ export class Coordinator {
       const jobId=match[1];await this.atomic(async()=>{const j=await this.store.get('job:'+jobId);if(j?.status!=='failed'||j.album)throw new PublicError('Only a failed, unprepared job can adopt a repaired engine.',409);await this.store.put(`job-history:${jobId}:${id()}`,j);j.config.engine_ref=(await this.config()).engine_ref;j.attempts=0;j.run=null;j.lease_until=0;j.retry_after=0;await this.store.put('job:'+jobId,j);});return json(await this.ensure(jobId.slice(6),true,true));
     }
     if((match=p.match(/^\/api\/jobs\/(album-\d{4}-\d{2}-\d{2})\/resnapshot$/))&&method==='POST') {
-      const jobId=match[1];await this.atomic(async()=>{const j=await this.store.get('job:'+jobId);if(j?.status!=='failed')throw new PublicError('Only a failed job can be restarted with new materials.',409);const sources=(await this.list('source:')).filter(s=>s.enabled&&s.status!=='invalid').sort((a,b)=>a.hash.localeCompare(b.hash));if(!sources.length)throw new PublicError('No valid selected materials.');await this.store.put(`job-history:${jobId}:${id()}`,j);j.sources=sources.map(({hash,name,tags,extension,bytes})=>({hash,name,tags,extension,bytes}));j.config=await this.config();j.seed=String(BigInt('0x'+crypto.randomUUID().replaceAll('-','').slice(0,15)));j.attempts=0;j.run=null;j.lease_until=0;j.retry_after=0;j.album=null;await this.store.put('job:'+jobId,j);});return json(await this.ensure(jobId.slice(6),true,true));
+      const jobId=match[1];await this.atomic(async()=>{const j=await this.store.get('job:'+jobId);if(j?.status!=='failed')throw new PublicError('Only a failed job can be restarted with new materials.',409);const sources=(await this.list('source:')).filter(s=>s.enabled&&s.status!=='invalid').sort((a,b)=>a.hash.localeCompare(b.hash));if(!sources.length)throw new PublicError('No valid selected materials.');await this.store.put(`job-history:${jobId}:${id()}`,j);j.sources=sources.map(({hash,name,tags,extension,bytes})=>({hash,name,tags,extension,bytes}));j.config=await this.config();j.preference=await preferenceSnapshot(this);j.seed=String(BigInt('0x'+crypto.randomUUID().replaceAll('-','').slice(0,15)));j.attempts=0;j.run=null;j.lease_until=0;j.retry_after=0;j.album=null;await this.store.put('job:'+jobId,j);});return json(await this.ensure(jobId.slice(6),true,true));
     }
     if(p==='/api/series/resume'&&method==='POST'){await this.store.put('ended',false);return json({ok:true});}
     if(p==='/api/uploads/begin'&&method==='POST') {
@@ -263,6 +270,7 @@ export class Coordinator {
       const cfg=await this.config(),input=await body();const now=new Date(input.now||Date.now());let errors=[];
       for(const todo of plan(now,cfg,await this.store.get('current'),await this.store.get('ended')))try{await this.ensure(todo.day,todo.publish);}catch(e){errors.push(e.message);}
       for(const kind of ['selection','export'])for(const t of await this.list(kind+':'))if(t.status!=='ready')await this.dispatchSaved(kind,t.id);
+      for(const t of await this.list('studio-task:'))if(t.status!=='ready')await dispatchStudio(this,t.id);
       await this.store.put('last-tick',{time:now.toISOString(),errors});return json({ok:!errors.length,errors});
     }
     if((match=p.match(/^\/internal\/jobs\/(album-\d{4}-\d{2}-\d{2})\/(claim|ready|publish|failed)$/))&&method==='POST') {
@@ -304,11 +312,11 @@ export class Coordinator {
     }
     if(p==='/internal/storage/write'&&method==='POST'){await reserveWrite(this);return json({ok:true});}
     if(p==='/internal/storage/register'&&method==='POST') {
-      const b=await body();if(!/^(selected\/[0-9a-f-]{36}\/(track\.(wav|mp3)|cover\.png|provenance\.json|credits\.txt)|catalog\/album-\d{4}-\d{2}-\d{2}\/cover-small\.jpg|exports\/[0-9a-f-]{36}\/release(?:-\d{2,4})?\.zip)$/.test(b.key)||!this.permanent.register)return json({error:'Invalid registration'},400);
+      const b=await body();if(!/^(selected\/[0-9a-f-]{36}\/(track\.(wav|mp3)|cover\.png|provenance\.json|credits\.txt)|catalog\/album-\d{4}-\d{2}-\d{2}\/cover-small\.jpg|exports\/[0-9a-f-]{36}\/release(?:-\d{2,4})?\.zip|lab\/[0-9a-f-]{36}\/[a-z0-9.-]+)$/.test(b.key)||!this.permanent.register)return json({error:'Invalid registration'},400);
       await this.permanent.register(b.key,b);return json({ok:true});
     }
     if(p==='/internal/objects/begin'&&method==='POST') {
-      const b=await body();if(!/^(selected\/[0-9a-f-]{36}\/(track\.(wav|mp3)|cover\.png|provenance\.json|credits\.txt)|exports\/[0-9a-f-]{36}\/release(?:-\d{2,4})?\.zip)$/.test(b.key)||!Number.isSafeInteger(b.bytes)||b.bytes<=0)return json({error:'Invalid permanent object'},400);
+      const b=await body();if(!/^(selected\/[0-9a-f-]{36}\/(track\.(wav|mp3)|cover\.png|provenance\.json|credits\.txt)|exports\/[0-9a-f-]{36}\/release(?:-\d{2,4})?\.zip|lab\/[0-9a-f-]{36}\/[a-z0-9.-]+)$/.test(b.key)||!Number.isSafeInteger(b.bytes)||b.bytes<=0)return json({error:'Invalid permanent object'},400);
       const upload=await this.permanent.createMultipartUpload(b.key,{httpMetadata:{contentType:mime(b.key)}});const uploadId=id();await this.store.put('object-upload:'+uploadId,{id:uploadId,key:b.key,bytes:b.bytes,uploadId:upload.uploadId});return json({id:uploadId,part_size:8*1024*1024});
     }
     if((match=p.match(/^\/internal\/objects\/([0-9a-f-]{36})\/(part|complete)$/))) {
@@ -316,6 +324,7 @@ export class Coordinator {
       if(match[2]==='part'&&method==='PUT'){const n=Number(url.searchParams.get('n'));if(!Number.isInteger(n)||n<1||n>10000)return json({error:'Invalid part'},400);const data=await request.arrayBuffer();if(data.byteLength>8*1024*1024)return json({error:'Part too large'},413);const part=await upload.uploadPart(n,data);await this.store.put(`object-part:${u.id}:${String(n).padStart(5,'0')}`,{...part,bytes:data.byteLength});return json({ok:true});}
       if(match[2]==='complete'&&method==='POST'){const parts=(await this.list(`object-part:${u.id}:`)).sort((a,b)=>a.partNumber-b.partNumber);if(parts.reduce((n,p)=>n+p.bytes,0)!==u.bytes||parts.some((p,i)=>p.partNumber!==i+1))return json({error:'Object incomplete'},409);if(!await this.permanent.head(u.key))await upload.complete(parts.map(({partNumber,etag})=>({partNumber,etag})));u.done=true;await this.store.put('object-upload:'+u.id,u);return json({ok:true});}
     }
+    if((match=p.match(/^\/internal\/permanent\/(lab\/[0-9a-f-]{36}\/[a-z0-9.-]+)$/))&&['GET','HEAD'].includes(method))return privateObject(this.permanent,match[1],request,match[1]);
     if((match=p.match(/^\/internal\/permanent\/((?:catalog\/album-\d{4}-\d{2}-\d{2}\/cover-small\.jpg)|(?:selected\/[0-9a-f-]{36}\/(?:track\.(?:wav|mp3)|cover\.png|provenance\.json|credits\.txt))|(?:exports\/[0-9a-f-]{36}\/release(?:-\d{2,4})?\.zip)|(?:snapshots\/album-\d{4}-\d{2}-\d{2}\.json))$/))) {
       if(method==='PUT'){await this.permanent.put(match[1],request.body,{httpMetadata:{contentType:mime(match[1])}});return json({ok:true});}
       if(['GET','HEAD'].includes(method))return privateObject(this.permanent,match[1],request,match[1]);

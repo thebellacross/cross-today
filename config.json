@@ -2,7 +2,7 @@
   "artist": "CROSS",
   "bandcamp": "https://bellacrossmusic.bandcamp.com/",
   "credits": "Recordings and curation by CROSS. Composed from the artist's selected sound materials using a seeded, independent implementation of the Chance structures.",
-  "engine_ref": "engine-v8",
+  "engine_ref": "engine-v9",
   "generation": {
     "daily_parameters": true,
     "feed": null,
@@ -43,7 +43,19 @@
     "tracks": [
       5,
       13
-    ]
+    ],
+    "renderer": "composition",
+    "candidate_count": 3,
+    "controls": {
+      "structure_randomness": 1.0,
+      "processing_intensity": 0.35,
+      "bit_damage": 0.2,
+      "bus_intervention": 0.15,
+      "loop_activity": 0.6,
+      "space_motion": 0.35,
+      "dropout_probability": 0.0,
+      "stereo_width": 1.0
+    }
   },
   "github_owner": "thebellacross",
   "import": {
@@ -53,7 +65,8 @@
     "minimum_seconds": 0.1,
     "overlap_seconds": 2,
     "sample_rate": 32000,
-    "segment_seconds": 45
+    "segment_seconds": 45,
+    "channels": "preserve"
   },
   "project_name": "CROSS",
   "reference": {
@@ -87,5 +100,6 @@
     "max_source_bytes": 5368709120
   },
   "timezone": "Asia/Shanghai",
-  "worker_url": "https://cross-today.thebellacross.workers.dev"
+  "worker_url": "https://cross-today.thebellacross.workers.dev",
+  "preference_profile": "open"
 }

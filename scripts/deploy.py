@@ -23,7 +23,7 @@ from music.common import config,save_json
 
 
 def main():
-    parser=argparse.ArgumentParser();parser.add_argument('--apply',action='store_true');args=parser.parse_args()
+    parser=argparse.ArgumentParser();parser.add_argument('--apply',action='store_true');parser.add_argument('--message',default='Update CROSS publishing system');args=parser.parse_args()
     cfg=config();repo=cfg['github_owner']+'/'+cfg['repository'];storage_repo=keychain('STORAGE_REPOSITORY') or cfg['github_owner']+'/'+cfg['repository'].removesuffix('-daily')+'-materials'
     if repo!='thebellacross/cross-today':raise SystemExit('Review the target repository before changing deployment ownership.')
     worker_cfg=json.loads((ROOT/'worker/wrangler.jsonc').read_text())
@@ -109,7 +109,7 @@ def main():
     for name in run(['git','ls-files']).stdout.splitlines():
         data=(ROOT/name).read_bytes()
         if any(value and value.encode() in data for value in sensitive) or storage_repo.encode() in data:raise RuntimeError('Secret publication guard blocked a staged file.')
-    if staged:run(['git','commit','-m','Build free private-source daily music publishing system'])
+    if staged:run(['git','commit','-m',args.message])
     remote=run(['git','remote','get-url','origin'],check=False)
     if remote.returncode:run(['git','remote','add','origin','https://github.com/'+repo+'.git'])
     elif remote.stdout.strip()!='https://github.com/'+repo+'.git':raise RuntimeError('Existing Git remote differs from the authorized repository.')

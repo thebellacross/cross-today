@@ -10,28 +10,32 @@ from .common import ROOT, config, digest, file_hash, save_json, run_audio, publi
 
 EXTENSIONS = {".wav", ".aiff", ".aif", ".mp3", ".m4a", ".flac"}
 ADAPTER_VERSION = "pcm16-mono-2"
+NATIVE_ADAPTER_VERSION = "pcm16-native-3"
+
+def adapter_version(settings):
+    return NATIVE_ADAPTER_VERSION if settings.get("channels")=="preserve" else ADAPTER_VERSION
 
 def decode(path, rate):
     raw = run_audio(["-i", path, "-map", "0:a:0", "-vn", "-ac", "1", "-ar", rate, "-f", "s16le", "-"])
     return np.frombuffer(raw, dtype="<i2")
 
-def segments(path,rate,segment,overlap,minimum):
+def segments(path,rate,segment,overlap,minimum,channels=1):
     """Decode a long source with bounded memory and exact PCM frame boundaries."""
-    command=[ffmpeg(),'-nostdin','-hide_banner','-loglevel','error','-i',str(path),'-map','0:a:0','-vn','-ac','1','-ar',str(rate),'-f','s16le','-']
+    command=[ffmpeg(),'-nostdin','-hide_banner','-loglevel','error','-i',str(path),'-map','0:a:0','-vn','-ac',str(channels),'-ar',str(rate),'-f','s16le','-']
     process=subprocess.Popen(command,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL)
-    buffer=b'';start=0;eof=False
+    buffer=b'';start=0;eof=False;frame_bytes=2*channels
     try:
         while True:
             # One frame of lookahead prevents a duplicate trailing overlap segment.
-            while len(buffer)<segment*2+2 and not eof:
-                data=process.stdout.read(segment*2+2-len(buffer))
+            while len(buffer)<segment*frame_bytes+frame_bytes and not eof:
+                data=process.stdout.read(segment*frame_bytes+frame_bytes-len(buffer))
                 if not data:eof=True
                 buffer+=data
-            frames=min(segment,len(buffer)//2)
+            frames=min(segment,len(buffer)//frame_bytes)
             if frames<minimum:break
-            yield start,start+frames,np.frombuffer(buffer[:frames*2],dtype='<i2')
+            yield start,start+frames,np.frombuffer(buffer[:frames*frame_bytes],dtype='<i2').reshape(frames,channels) if channels>1 else np.frombuffer(buffer[:frames*frame_bytes],dtype='<i2')
             if eof:break
-            step=segment-overlap;buffer=buffer[step*2:];start+=step
+            step=segment-overlap;buffer=buffer[step*frame_bytes:];start+=step
         if process.wait()!=0:raise ValueError('Audio decoding failed; check the source format and integrity.')
     finally:
         process.stdout.close()
@@ -46,18 +50,20 @@ def write_wav(path, data, rate):
         w.setframerate(rate)
         w.writeframes(np.ascontiguousarray(data, dtype="<i2").tobytes())
 
-def read_clip(path):
+def read_clip(path, native=False):
     with wave.open(str(path), "rb") as w:
-        if w.getnchannels() != 1 or w.getsampwidth() != 2:
+        if w.getnchannels() not in ((1,2) if native else (1,)) or w.getsampwidth() != 2:
             raise ValueError("The recording channel requires mono PCM16 WAV.")
-        return np.frombuffer(w.readframes(w.getnframes()), dtype="<i2").astype(np.float64) / 32768., w.getframerate()
+        x=np.frombuffer(w.readframes(w.getnframes()), dtype="<i2").astype(np.float64) / 32768.
+        if w.getnchannels()==2:x=x.reshape(-1,2)
+        return x,w.getframerate()
 
 def import_one(path, cache, settings, name=None, tags=None, expected_hash=None):
     path, cache = Path(path), Path(cache)
     sha = file_hash(path)
     if expected_hash and sha != expected_hash:
         raise ValueError("Source checksum mismatch; import rejected.")
-    profile = dict(settings, adapter=ADAPTER_VERSION)
+    profile = dict(settings, adapter=adapter_version(settings))
     if profile["gather"] != 0 or profile["half_life"] != 0 or not profile["keep_static"]:
         raise ValueError("Local materials require gather=0, half_life=0 and keep_static=true.")
     key = digest({"source": sha, "profile": profile})
@@ -82,17 +88,23 @@ def import_one(path, cache, settings, name=None, tags=None, expected_hash=None):
     if segment < minimum or overlap < 0 or overlap >= segment:
         raise ValueError("Invalid segmentation settings.")
     clips = [];audible=False
-    for start,end,x in segments(path,rate,segment,overlap,minimum):
+    channels=2 if settings.get("channels")=="preserve" else 1
+    for start,end,x in segments(path,rate,segment,overlap,minimum,channels):
         audible=audible or bool(np.any(x))
         clip_id = digest({"source": sha, "start_frame": start, "end_frame": end, "profile": profile})
         wav = directory / (clip_id + ".wav")
         write_wav(wav, x, rate)
         y = x.astype(float) / 32768
+        if y.ndim==2:y=y.mean(axis=1)
         f = np.abs(np.fft.rfft(y[:min(len(y), 32768)]))
         feature = [float(np.sqrt(np.mean(y*y))), float(np.mean(np.abs(np.diff(y)))), float(np.dot(np.arange(len(f)), f)/(f.sum()+1e-9)/len(f))]
         c = {"id": clip_id, "source_hash": sha, "name": label, "tags": tags or [], "start_frame": start, "end_frame": end,
              "start": start/rate, "end": end/rate, "seconds": (end-start)/rate, "sample_rate": rate,
-             "format": "mono PCM16 WAV", "adapter": ADAPTER_VERSION, "cache_file": str(wav.relative_to(cache)), "cache_sha256":file_hash(wav), "features": feature}
+             "format": ("stereo" if channels==2 else "mono")+" PCM16 WAV", "channels": channels, "adapter": adapter_version(settings), "cache_file": str(wav.relative_to(cache)), "cache_sha256":file_hash(wav), "features": feature}
+        if channels==2:
+            from .features import frames
+            c["analysis"]=frames(x.astype(float)/32768,rate)
+            c["channel_policy"]="preserve stereo; duplicate mono; FFmpeg downmix for more than two channels"
         save_json(wav.with_suffix(".json"), {k:v for k,v in c.items() if k != "cache_file"})
         clips.append(c)
     if not clips or not audible:raise ValueError('Source is empty or digitally silent; no substitute audio was used.')

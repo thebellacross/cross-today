@@ -48,6 +48,7 @@ export class GitHubBucket {
     if (this.bucket === 'permanent' && (m = /^selected\/([0-9a-f-]{36})\/(track\.(?:wav|mp3)|cover\.png|provenance\.json|credits\.txt)$/.exec(key))) return {repo: this.env.GITHUB_REPOSITORY, tag: 'kept-' + m[1], name: m[2], public: true};
     if (this.bucket === 'permanent' && (m = /^catalog\/(album-(\d{4})-\d{2}-\d{2})\/cover-small\.jpg$/.exec(key))) return {repo: this.env.GITHUB_REPOSITORY, tag: 'catalog-' + m[2], name: m[1] + '-cover-small.jpg', public: true};
     if (this.bucket === 'permanent' && (m = /^exports\/([0-9a-f-]{36})\/(release(?:-\d{2,4})?\.zip)$/.exec(key))) return {repo: this.env.STORAGE_REPOSITORY, tag: 'export-' + m[1], name: m[2], public: false};
+    if (this.bucket === 'permanent' && (m = /^lab\/([0-9a-f-]{36})\/([a-z0-9.-]+)$/.exec(key))) return {repo: this.env.STORAGE_REPOSITORY, tag: 'lab-' + m[1], name: m[2], public: false};
     const digest = await sha(enc.encode(this.bucket + '/' + key));
     const shard = digest.slice(0, 1);
     const tag = await this.store.transaction(async txn => {

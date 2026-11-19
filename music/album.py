@@ -44,8 +44,8 @@ def download_archives(output,extension,limit=1024**3):
         downloads[label]=name
     return downloads
 
-def create_album(snapshot,cache,output,seed,day,number=0,settings=None,short=None,final_override=None):
-    cfg=settings or config();g=dict(cfg['generation']);rng=np.random.default_rng(seed)
+def create_album(snapshot,cache,output,seed,day,number=0,settings=None,short=None,final_override=None,preference=None):
+    cfg=settings or config();g=dict(cfg['generation']);g['engine_ref']=cfg.get('engine_ref');rng=np.random.default_rng(seed)
     output=Path(output);output.mkdir(parents=True,exist_ok=True)
     if not snapshot.get('clips'):raise ValueError('No valid sound materials; album not generated.')
     if not 0<g['track_seconds'][0]<=g['track_seconds'][1] or not 1<=g['tracks'][0]<=g['tracks'][1]<=30:raise ValueError('Invalid track duration or count range.')
@@ -57,7 +57,7 @@ def create_album(snapshot,cache,output,seed,day,number=0,settings=None,short=Non
     if len(weights)!=len(counts):weights=np.ones(len(counts))
     count=int(rng.choice(counts,p=weights/weights.sum())) if not short else 3
     pure=bool(rng.random()<g['pure_day_probability']);tracks=[];scores=[];moods=[];rings=[];durations=[]
-    if g.get('daily_parameters'):
+    if g.get('daily_parameters') and g.get('renderer')!='composition':
         g['palette_size']=[3,int(rng.choice([8,20,60,180],p=[.55,.25,.13,.07]))]
         g['garble']=float(rng.choice([0,.15,.35,.6]))
     if pure:g['form']='fontana'
@@ -70,7 +70,14 @@ def create_album(snapshot,cache,output,seed,day,number=0,settings=None,short=Non
         duration=float(short or 0)
         if g['track_seconds'][0]==g['track_seconds'][1]:duration=float(g['track_seconds'][0])
         while not short and not g['track_seconds'][0]<=duration<=g['track_seconds'][1]:duration=float(np.exp(rng.normal(np.log(g.get('median_seconds',210)),.7)))
-        track_seed=int(rng.integers(0,2**62));samples,score=render(snapshot['clips'],cache,track_seed,duration,g,age=0 if pure else min(number/180,1),pure=pure,feed=feed)
+        track_seed=int(rng.integers(0,2**62))
+        if g.get('renderer')=='composition':
+            from .studio import generate
+            pref=preference or {};samples,score=generate(snapshot,cache,track_seed,duration,g,pref.get('model'),pref.get('profile'))
+            # Context descriptions and fitted weights remain in private profiles.
+            score['plan']['context']=pref.get('profile',{}).get('id','open')
+            for event in score['events']:event.pop('feature_frames',None)
+        else:samples,score=render(snapshot['clips'],cache,track_seed,duration,g,age=0 if pure else min(number/180,1),pure=pure,feed=feed)
         name=title_for(score,rng,index);score.update({'n':index,'title':name,'seed':str(track_seed),'duration':len(samples)/g['sample_rate']})
         wav=output/f'{index:02d}.wav';mp3=output/f'{index:02d}.mp3'
         # Float PCM transport avoids quantising the final stereo master down to the source cache's 16 bits.
@@ -97,7 +104,7 @@ def create_album(snapshot,cache,output,seed,day,number=0,settings=None,short=Non
            'seed':str(seed),'snapshot':snapshot['id'],'engine':ENGINE_VERSION,'engine_hash':version_hash,'tracks':tracks,'duration':sum(durations),'palette':colors,'turns':turns,'cover':'cover.png','cover_small':'cover-small.jpg','banner':'banner.jpg',
            'score':'score.json','downloads':{'WAV':'album-wav.zip','MP3':'album-mp3.zip'},'credits':cfg['credits'],'final':final,'last_odds':odds,
            'rules':{'timezone':cfg['timezone'],**cfg['schedule'],**cfg['series']},'implementation':'Independent implementation; behavioural reference recorded in provenance.'}
-    public_clips=[{k:v for k,v in c.items() if k not in ('cache_file','features')} for c in snapshot['clips']]
+    public_clips=[{k:v for k,v in c.items() if k not in ('cache_file','features','analysis')} for c in snapshot['clips']]
     provenance={'schema':1,'seed':str(seed),'snapshot':snapshot['id'],'sources':public_clips,'config':{k:v for k,v in cfg.items() if k not in ('worker_url','site_url')},'generation':g,'final':final,'engine':ENGINE_VERSION,'engine_hash':version_hash,'reference':cfg['reference'],
                 'runtime':{'python':sys.version.split()[0],'platform':platform.system()+' '+platform.machine(),'numpy':np.__version__,'ffmpeg':subprocess.check_output([ffmpeg(),'-version'],text=True).splitlines()[0]}}
     provenance['config']['generation']=g

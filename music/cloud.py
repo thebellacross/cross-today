@@ -14,7 +14,7 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from .common import ROOT, canonical, digest, file_hash, save_json
-from .library import import_one, ADAPTER_VERSION
+from .library import import_one, ADAPTER_VERSION, adapter_version
 from .album import create_album
 
 class ServiceFailure(RuntimeError):
@@ -107,7 +107,7 @@ class Cloud:
                 if checksum.hexdigest()!=meta['sha256']:raise RuntimeError('Release checksum mismatch.')
     def private_put(self,key,path):
         path=Path(path)
-        if key.startswith(('selected/','catalog/','exports/')) and self.storage_repo:
+        if key.startswith(('selected/','catalog/','exports/','lab/')) and self.storage_repo:
             return self.retained_put(key,path)
         if path.stat().st_size<=32*1024*1024:
             with open(path,'rb') as f:self.api('/internal/permanent/'+key,'PUT',raw=f)
@@ -121,10 +121,11 @@ class Cloud:
                 part+=1;self.api(f'/internal/objects/{upload["id"]}/part?n={part}','PUT',raw=chunk)
         self.api(f'/internal/objects/{upload["id"]}/complete','POST',{})
     def retained_put(self,key,path):
-        parts=key.split('/');kind=parts[0];private=kind=='exports'
+        parts=key.split('/');kind=parts[0];private=kind in ('exports','lab')
         if kind=='selected':tag='kept-'+parts[1];name=parts[2]
         elif kind=='catalog':tag='catalog-'+parts[1][6:10];name=parts[1]+'-cover-small.jpg'
         elif kind=='exports':tag='export-'+parts[1];name=parts[2]
+        elif kind=='lab':tag='lab-'+parts[1];name=parts[2]
         else:raise ValueError('Unsupported retained object')
         repo=self.storage_repo if private else self.repo
         if private:
@@ -162,7 +163,7 @@ class Cloud:
     def material_snapshot(self,job,cache):
         clips=[]
         for source in job['sources']:
-            key=digest({'source':source['hash'],'profile':dict(job['config']['import'],adapter=ADAPTER_VERSION)})
+            key=digest({'source':source['hash'],'profile':dict(job['config']['import'],adapter=adapter_version(job['config']['import']))})
             saved=self.api(f'/internal/cache/{key}/manifest.json',missing=True)
             if isinstance(saved,bytes):saved=json.loads(saved)
             good=bool(saved)
@@ -188,7 +189,17 @@ class Cloud:
         clips=sorted({c['id']:c for c in clips}.values(),key=lambda c:(c['source_hash'],c['start_frame']))
         snapshot={'schema':1,'import':job['config']['import'],'clips':clips};snapshot['id']=digest(snapshot)
         if not clips:raise RuntimeError('No valid recordings; publication stopped without fallback.')
-        self.api(f'/internal/permanent/snapshots/{job["id"]}.json','PUT',raw=canonical(snapshot));return snapshot
+        if job['id'].startswith('album-'):self.api(f'/internal/permanent/snapshots/{job["id"]}.json','PUT',raw=canonical(snapshot))
+        return snapshot
+    def restore_snapshot(self,snapshot,cache):
+        for clip in snapshot['clips']:
+            target=cache/clip['cache_file'];target.parent.mkdir(parents=True,exist_ok=True)
+            if target.exists() and file_hash(target)==clip['cache_sha256']:continue
+            key=clip['cache_file'].split('/')[0]
+            data=self.api(f'/internal/cache/{key}/{clip["id"]}.wav',missing=True)
+            if data is None:raise RuntimeError('Retained derived material is unavailable; original recordings remain private.')
+            target.write_bytes(data)
+            if file_hash(target)!=clip['cache_sha256']:raise RuntimeError('Retained derived material checksum failed.')
     def compose(self,job_id):
         job=self.api(f'/internal/jobs/{job_id}/claim','POST',{'run':self.run})
         if job.get('done'):return
@@ -198,7 +209,7 @@ class Cloud:
         folder=ROOT/'output'/job_id;cache=ROOT/'.cache/audio'
         snapshot=self.material_snapshot(job,cache)
         print('Material snapshot validated; rendering album.',flush=True)
-        album=create_album(snapshot,cache,folder,int(job['seed']),job['day'],job['number'],settings=job['config'],final_override=job['final_decision'])
+        album=create_album(snapshot,cache,folder,int(job['seed']),job['day'],job['number'],settings=job['config'],final_override=job['final_decision'],preference=job.get('preference'))
         print('Album files complete; uploading generated assets.',flush=True)
         self.upload_assets(job_id,folder,album)
         print('Generated assets verified; retaining catalog cover.',flush=True)
@@ -277,7 +288,7 @@ class Cloud:
             self.api('/internal/cleanup','POST',{'id':job_id,'deleted':True})
 
 def main():
-    p=argparse.ArgumentParser();p.add_argument('mode',choices=['tick','render','publish','select','export','cleanup']);p.add_argument('--job',default='');a=p.parse_args();cloud=Cloud()
+    p=argparse.ArgumentParser();p.add_argument('mode',choices=['tick','render','publish','select','export','cleanup','studio']);p.add_argument('--job',default='');a=p.parse_args();cloud=Cloud()
     try:
         if a.mode=='tick':cloud.api('/internal/tick','POST',{})
         elif a.mode=='render':cloud.compose(a.job)
@@ -285,6 +296,9 @@ def main():
         elif a.mode=='select':cloud.select(a.job)
         elif a.mode=='export':cloud.export(a.job)
         elif a.mode=='cleanup':cloud.cleanup()
+        elif a.mode=='studio':
+            from .studio import cloud_task
+            cloud_task(cloud,a.job)
     except Exception as error:
         print('Diagnostic: '+failure_diagnostic(error),flush=True)
         if a.mode in ('render','publish') and re.fullmatch(r'album-\d{4}-\d{2}-\d{2}',a.job):

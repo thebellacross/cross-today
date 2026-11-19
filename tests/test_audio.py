@@ -15,7 +15,7 @@ def recording(tmp_path):
 def test_adapter_stereo_noise_formats_and_incremental(tmp_path):
     p=recording(tmp_path);original=file_hash(p);settings=config()['import'];cache=tmp_path/'cache'
     for ext,codec in [('aif','pcm_s16be'),('mp3','libmp3lame'),('m4a','aac'),('flac','flac')]:
-        other=tmp_path/('test.'+ext);run_audio(['-y','-i',p,'-c:a',codec,other]);m=import_one(other,cache,settings);x,sr=read_clip(cache/m['clips'][0]['cache_file']);assert sr==32000 and len(x)>60000
+        other=tmp_path/('test.'+ext);run_audio(['-y','-i',p,'-c:a',codec,other]);m=import_one(other,cache,settings);x,sr=read_clip(cache/m['clips'][0]['cache_file'],native=True);assert sr==32000 and len(x)>60000
     m=import_one(p,cache,settings);clip=cache/m['clips'][0]['cache_file'];mtime=clip.stat().st_mtime_ns
     m2=import_one(p,cache,settings);assert m==m2 and clip.stat().st_mtime_ns==mtime and file_hash(p)==original
     with wave.open(str(p))as w:assert w.getnchannels()==2
@@ -30,7 +30,7 @@ def test_segment_identity_and_silent_rejection(tmp_path):
 
 @pytest.mark.parametrize('form',['chance','fusion','loops','baseline','fontana','automaton','drift'])
 def test_forms_are_deterministic_and_use_real_recordings(tmp_path,form):
-    p=recording(tmp_path);m=import_one(p,tmp_path/'cache',config()['import']);g=dict(config()['generation'],form=form)
+    p=recording(tmp_path);m=import_one(p,tmp_path/'cache',{k:v for k,v in config()['import'].items() if k!='channels'});g=dict(config()['generation'],form=form)
     a,score=render(m['clips'],tmp_path/'cache',901,2.5,g);b,s2=render(m['clips'],tmp_path/'cache',901,2.5,g)
     assert np.array_equal(a,b) and score==s2 and np.isfinite(a).all() and np.max(np.abs(a))>0
     assert score['events'] and all(e['source_hash']==file_hash(p) for e in score['events'])

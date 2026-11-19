@@ -4,7 +4,7 @@ on:
     inputs:
       mode:
         type: choice
-        options: [tick, render, publish, select, export, cleanup]
+        options: [tick, render, publish, select, export, cleanup, studio]
         default: tick
         required: true
       job:

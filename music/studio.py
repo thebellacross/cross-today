@@ -7,7 +7,8 @@ import numpy as np
 from .common import ROOT,save_json,digest,file_hash,run_audio
 from .plan import plan_composition,seed_for
 from .renderer import render_plan,render_event,hashlib_array
-from .preference import proposals,vector,select,rank,train,scoped_vector
+from .preference import proposals,vector,select,rank,train,scoped_vector,FEATURES,LEGACY_FEATURES
+from .frequency import ANALYSIS_VERSION
 
 def encode(audio,rate,path,wav=False,output_rate=None):
     path=Path(path);raw=path.with_suffix('.f32');raw.write_bytes(np.asarray(audio,dtype='<f4').tobytes())
@@ -37,7 +38,12 @@ def experiment(snapshot,cache,folder,request,settings,model=None,parent=None):
     folder=Path(folder);folder.mkdir(parents=True,exist_ok=True);seed=int(request['seed']);profile=request['profile'];g=copy.deepcopy(settings['generation']);g.setdefault('controls',{}).update(profile.get('rules',{}).get('controls',{}));g['max_events']=profile.get('rules',{}).get('max_events',100)
     g['engine_ref']=settings['engine_ref'];g['model_version']={'id':model['id'] if model else None,'profile_id':profile['id'],'profile_revision':profile.get('revision',0)}
     parent=parent or plan_composition(snapshot,seed,request.get('seconds',36),g,context=profile['id'])
-    parent=copy.deepcopy(parent);parent['output_sample_rate']=request.get('wave_rate',parent.get('output_sample_rate',48000));parent['locks']=request.get('locks',parent['locks']);parent.pop('plan_id',None);parent['plan_id']=digest(parent)
+    parent=copy.deepcopy(parent);origin_id=parent.get('plan_id');parent.setdefault('origin_replay',copy.deepcopy(parent.get('replay')))
+    # A new operation can require a newer renderer than the inherited source
+    # plan. Preserve its origin while making the exported plan replayable with
+    # the engine that actually rendered these bytes.
+    parent['replay']={'engine_ref':settings['engine_ref'],'engine_hash':digest({f.name:file_hash(f) for f in sorted((ROOT/'music').glob('*.py'))}),'numpy':np.__version__,'configuration':g,'model_version':g['model_version'],'parent_plan_id':origin_id}
+    parent['output_sample_rate']=request.get('wave_rate',parent.get('output_sample_rate',48000));parent['locks']=request.get('locks',parent['locks']);parent.pop('plan_id',None);parent['plan_id']=digest(parent)
     actions=request.get('actions') or None
     plans=proposals(parent,snapshot,seed,locks=parent['locks'],actions=actions,limit=3,rules=profile.get('rules',{}),targets=request.get('targets'))
     if len(plans)<2:raise ValueError('No allowed variation remains. Change a decision or the explicit locks.')
@@ -99,6 +105,7 @@ def cloud_task(cloud,task_id):
                     if key not in loaded:
                         blob=cloud.api('/internal/permanent/lab/'+key+'-report.json');loaded[key]=json.loads(blob) if isinstance(blob,bytes) else blob
                     report=loaded[key];f['features_'+label]=scoped_vector(report['plan'],report,f.get('scope'))
+                    f['available_features_'+label]=len(FEATURES) if report.get('relation_analysis')==ANALYSIS_VERSION else len(LEGACY_FEATURES)
             model=train(records,task['profile']['id'],task['dataset_revision']);save_json(folder/'model.json',model);save_json(folder/'training.json',{'records':records,'dataset_revision':task['dataset_revision'],'model':model['id'],'evaluation':model['evaluation']})
             files={}
             for name in ('model.json','training.json'):

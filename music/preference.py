@@ -3,15 +3,17 @@ import copy
 import numpy as np
 from .common import digest
 from .plan import rng_for, mutate
+from .frequency import EXTRA_FEATURES,ANALYSIS_VERSION,pair_descriptors
 
-VERSION='relational-bt-1'
-FEATURES=['density','rest','entry_spacing','return_spacing','development','duration_spread','foreground_share','role_contrast','band_overlap','pan_separation','tail_occupancy','processing','bit_damage','loop_share','stereo','motion','foreground_noise','conflict_foreground','dense_transients','return_contrast','space_with_overlap','change_with_noise']
-ACTIONS=['delay-entry','earlier-entry','continue','withdraw','depth','space','processing','replace-material','repeat','return-later','swap-sections']
+VERSION='relational-bt-2'
+LEGACY_FEATURES=['density','rest','entry_spacing','return_spacing','development','duration_spread','foreground_share','role_contrast','band_overlap','pan_separation','tail_occupancy','processing','bit_damage','loop_share','stereo','motion','foreground_noise','conflict_foreground','dense_transients','return_contrast','space_with_overlap','change_with_noise']
+FEATURES=LEGACY_FEATURES+EXTRA_FEATURES
+ACTIONS=['delay-entry','earlier-entry','continue','withdraw','depth','space','processing','replace-material','repeat','return-later','swap-sections','frequency-shift','spectral-space']
 
 def vector(plan,report):
     events=report['events'];duration=plan['duration'];n=max(1,len(events));pe={e['event_id']:e for e in plan['events']};features={e['event_id']:e['processed_features'] for e in events}
     # Time-local overlap is measured AFTER transforms, envelopes and effect tails.
-    hop=.5;times=np.arange(0,report.get('duration',duration+3),hop);active=[];conflicts=[];pans=[];contrast=[];noisy=[];transients=[]
+    hop=.5;times=np.arange(0,report.get('duration',duration+3),hop);active=[];conflicts=[];pans=[];contrast=[];noisy=[];transients=[];partials=[];correlations=[]
     for t in times:
         sounding=[]
         for e in events:
@@ -20,12 +22,16 @@ def vector(plan,report):
             if f['rms']>1e-6:sounding.append((e,f))
         active.append(len(sounding))
         for i,(a,fa) in enumerate(sounding):
+            if fa.get('relation_analysis')==ANALYSIS_VERSION:correlations.append(fa['channel_correlation'])
             noisy.append(fa['flatness'] if a['role']=='foreground' else 0.)
             transients.append(fa['flux']*len(sounding))
             for b,fb in sounding[i+1:]:
                 ba=np.array(fa['bands']);bb=np.array(fb['bands']);overlap=float(np.dot(ba,bb)/(np.linalg.norm(ba)*np.linalg.norm(bb)+1e-12));conflicts.append(overlap)
                 pans.append(abs(pe[a['event_id']]['pan']['start']-pe[b['event_id']]['pan']['start'])/2)
                 contrast.append(abs(fa['rms']-fb['rms'])/(fa['rms']+fb['rms']+1e-9))
+                if fa.get('relation_analysis')==fb.get('relation_analysis')==ANALYSIS_VERSION:
+                    relation=pair_descriptors(fa,fb)
+                    if relation:partials.append([*relation,relation[0]*relation[4],relation[1]*float(a['role']=='foreground' or b['role']=='foreground')])
     avg=lambda x:float(np.mean(x)) if len(x) else 0.
     starts=sorted(e['start'] for e in events);intervals=np.diff(starts);returns=[];return_contrast=[]
     for e in events:
@@ -42,7 +48,14 @@ def vector(plan,report):
     proc=avg([pe[e['event_id']]['transform']['wet']+len(pe[e['event_id']]['transform']['operations'])/4 for e in events])
     bits=avg([sum(o['kind'] in ('bitcrush','fold','overflow','xor','bit-mask','rotate','gray','byte-swap') for o in pe[e['event_id']]['transform']['operations']) for e in events])
     values=[density,avg(np.array(active)==0),avg(intervals)/duration,avg(returns),development,float(np.std([e['duration']/duration for e in events])),sum(e['role']=='foreground' for e in events)/n,avg(contrast),overlap,avg(pans),tail,proc,bits,sum(e['technique'] in ('loop','hits') for e in events)/n,avg([f['side_ratio'] for f in features.values()]),avg([abs(e['pan']['end']-e['pan']['start']) for e in pe.values()]),noise,overlap*noise,avg(transients),avg(return_contrast),overlap*(tail+avg(pans)),development*noise]
-    return np.clip(np.nan_to_num(values),-4,4).tolist()
+    fine=[avg([p[i] for p in partials]) for i in range(5)]+[avg(correlations)]+[avg([p[i] for p in partials]) for i in (5,6)]
+    return np.clip(np.nan_to_num(values+fine),-4,4).tolist()
+
+def padded(values):
+    if len(values) not in (len(LEGACY_FEATURES),len(FEATURES)):raise ValueError('Unknown relation feature schema.')
+    out=np.pad(np.asarray(values,float),(0,len(FEATURES)-len(values)))
+    if not np.isfinite(out).all():raise ValueError('Non-finite relation features.')
+    return out
 
 def fit(x,y,regularization=1.):
     x=np.asarray(x,float);y=np.asarray(y,float);w=np.zeros(len(FEATURES))
@@ -60,7 +73,12 @@ def train(records,profile,revision,allow_simulated=False):
         if f.get('origin')!='human' and not allow_simulated:raise ValueError('Non-human labels cannot enter a personal profile.')
         if f['profile_id']!=profile:continue
         valid.append(f)
-    x=np.asarray([np.array(f['features_A'])-f['features_B'] for f in valid]);y=np.array([f['choice']=='A' for f in valid],float)
+    differences=[];observed=np.zeros(len(FEATURES),int)
+    for f in valid:
+        count=min(f.get('available_features_A',len(f['features_A'])),f.get('available_features_B',len(f['features_B'])))
+        if count not in (len(LEGACY_FEATURES),len(FEATURES)):raise ValueError('Unknown observed feature schema.')
+        delta=padded(f['features_A'])-padded(f['features_B']);delta[count:]=0;observed[:count]+=1;differences.append(delta)
+    x=np.asarray(differences);y=np.array([f['choice']=='A' for f in valid],float)
     groups=sorted(set(f['family_id'] for f in valid));seed=digest({'revision':revision,'profile':profile,'records':valid});r=rng_for(seed,'bootstrap');weights=fit(x,y);ensemble=[]
     for _ in range(16):
         draws=r.choice(groups,len(groups),replace=True) if groups else [];indices=[i for group in draws for i,f in enumerate(valid) if f['family_id']==group]
@@ -69,14 +87,16 @@ def train(records,profile,revision,allow_simulated=False):
     if len(groups)>=4:
         test_groups=set(groups[::4]);tr=[i for i,f in enumerate(valid) if f['family_id'] not in test_groups];te=[i for i,f in enumerate(valid) if f['family_id'] in test_groups];frozen=fit(x[tr],y[tr]);evaluation.update(status='technical held-out ranking only; artistic evaluation still requires unseen listening',test_families=sorted(test_groups),accuracy=float(np.mean((x[te]@frozen>0)==y[te])))
     model={'schema':1,'algorithm':VERSION,'feature_names':FEATURES,'profile_id':profile,'dataset_revision':revision,'labels':len(valid),'families':len(groups),'weights':weights.tolist(),'ensemble':ensemble,'regularization':1.,'evaluation':evaluation,'label_origin':'simulated-test-only' if allow_simulated else 'human','uncertainty_method':'parent-family grouped bootstrap; unreliable below three independent families'}
+    model['observed_feature_counts']=observed.tolist();model['missing_feature_policy']='Old unmeasured descriptors contribute no evidence; their pairwise differences are masked, never fabricated.'
     model['id']=digest(model);return model
 
 def rank(candidates,model,allow_simulated=False):
-    if model and (model['algorithm']!=VERSION or model['feature_names']!=FEATURES or (model.get('label_origin')!='human' and not allow_simulated)):raise ValueError('Incompatible or simulated personal model.')
-    w=np.array(model['weights']) if model else np.zeros(len(FEATURES));result=[];base=np.array(candidates[0]['features'])
+    compatible=not model or (model['algorithm']==VERSION and model['feature_names']==FEATURES) or (model['algorithm']=='relational-bt-1' and model['feature_names']==LEGACY_FEATURES)
+    if model and (not compatible or (model.get('label_origin')!='human' and not allow_simulated)):raise ValueError('Incompatible or simulated personal model.')
+    w=padded(model['weights']) if model else np.zeros(len(FEATURES));result=[];base=padded(candidates[0]['features'])
     for c in candidates:
-        v=np.array(c['features']);z=float((v-base)@w);prob=float(1/(1+np.exp(-np.clip(z,-30,30))))
-        variance=float(np.std([np.dot(v-base,a) for a in model['ensemble']])) if model and model['families']>=3 else None
+        v=padded(c['features']);z=float((v-base)@w);prob=float(1/(1+np.exp(-np.clip(z,-30,30))))
+        variance=float(np.std([np.dot(v-base,padded(a)) for a in model['ensemble']])) if model and model['families']>=3 else None
         result.append({'id':c['id'],'score':float(v@w),'preference_vs_first':prob,'bootstrap_logit_sd':variance})
     return sorted(result,key=lambda x:x['score'],reverse=True)
 
@@ -85,7 +105,7 @@ def select(candidates,model,seed,exploration=.2):
     if explore:
         weights=np.array([1+(row['bootstrap_logit_sd'] or 0) for row in ranking]);selected=ranking[int(r.choice(len(ranking),p=weights/weights.sum()))]
     else:selected=ranking[0]
-    return selected['id'],{'model_id':model['id'] if model else None,'personal_labels':model['labels'] if model else 0,'exploration':bool(explore),'ranking':ranking,'seed':str(seed),'probability_is_not_confidence':True}
+    return selected['id'],{'model_id':model['id'] if model else None,'personal_labels':model['labels'] if model else 0,'exploration':bool(explore),'ranking':ranking,'seed':str(seed),'probability_is_not_confidence':True,'feature_schema':VERSION,'trained_feature_count':len(model['feature_names']) if model else 0,'legacy_projection':bool(model and model['algorithm']!=VERSION)}
 
 def constrain(plan,rules):
     """Explicit bounds remain independent of fitted weights. Reject, don't silently repair."""
@@ -100,7 +120,7 @@ def constrain(plan,rules):
 def proposals(parent,snapshot,seed,locks=None,actions=None,limit=3,rules=None,targets=None):
     rows=[parent];r=rng_for(seed,'proposal-order')
     if actions is None:
-        automatic=ACTIONS if parent['controls']['structure_randomness'] else ['processing','space']
+        automatic=ACTIONS if parent['controls']['structure_randomness'] else ['processing','space','frequency-shift','spectral-space']
         actions=list(r.permutation(automatic))
     targets=[e['event_id'] for e in parent['events'] if (targets is None or e['event_id'] in targets) and e['event_id'] not in (locks or parent['locks']).get('events',[])]
     for action in actions:

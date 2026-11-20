@@ -5,7 +5,7 @@ import math
 import numpy as np
 from .common import digest,ROOT,file_hash
 
-VERSION='composition-1'
+VERSION='composition-2'
 CONTROL_DEFAULTS={'structure_randomness':1.,'processing_intensity':.35,'bit_damage':.2,'bus_intervention':.15,'loop_activity':.6,'space_motion':.35,'dropout_probability':.0,'stereo_width':1.}
 PROCESSES=['accumulation','erosion','sustained-density','alternation','interruption','return','transformation','suspension']
 TECHNIQUES=['tape','reverse','varispeed','playhead','mosaic','spectral','cross','room','freeze','weather','data','loop','hits']
@@ -115,7 +115,7 @@ def plan_composition(snapshot,seed,seconds,settings,context='open',family=None):
     family=family or digest({'seed':str(seed),'snapshot':snapshot['id']})[:24]
     p={'schema':2,'planner':VERSION,'seed':str(seed),'family_id':family,'parent_id':None,'snapshot':snapshot['id'],'context':context,'sample_rate':settings['sample_rate'],'duration':float(seconds),
        'form':form,'process':process,'controls':c,'sections':sections,'events':events,'buses':buses,'ending':{'kind':str(rng_for(seed,'work','ending').choice(['fade','hard','tape-stop'] if c['bus_intervention'] else ['fade','hard'])) if c['structure_randomness'] else 'fade','seconds':min(3.,seconds/10)},'master_gain':.7,
-       'locks':{'events':[],'regions':[],'relations':[]},'decision_log':[{'choice':'process','value':process,'stream':'work','origin':'unbiased exploration; no personal evidence'}]}
+       'locks':{'events':[],'regions':[],'relations':[]},'decision_log':[{'choice':'process','value':process,'stream':'work','origin':'unbiased exploration; no personal evidence'}], 'output_sample_rate':settings.get('output_sample_rate',settings['sample_rate'])}
     p['replay']={'engine_ref':settings.get('engine_ref'),'engine_hash':digest({f.name:file_hash(f) for f in sorted((ROOT/'music').glob('*.py'))}),'numpy':np.__version__,'configuration':settings,'model_version':settings.get('model_version')}
     p['plan_id']=digest(p);return p
 
@@ -155,6 +155,12 @@ def mutate(parent,action,target,seed,snapshot,locks=None):
         elif action=='processing':
             if not p['controls']['processing_intensity']:raise ValueError('Processing is disabled by explicit control.')
             e['transform']['wet']=1.-e['transform']['wet'];e['transform']['technique']='weather' if e['transform']['technique']=='tape' else 'tape'
+        elif action=='frequency-shift':
+            if not p['controls']['processing_intensity']:raise ValueError('Frequency processing is disabled by explicit control.')
+            e['transform']['operations'].append({'kind':'frequency-shift','shift_hz':float(r.choice([-80,-40,40,80])),'wet':.85,'pad_seconds':.25,'operation_seed':str(seed_for(seed,target,action)), 'algorithm':'analytic-shift-1','tail_policy':'contained before event envelope'})
+        elif action=='spectral-space':
+            if not p['controls']['space_motion']:raise ValueError('Spatial processing is disabled by explicit control.')
+            direction=float(r.choice([-1,1]));e['space']['spectral']={'kind':'spectral-space','crossovers_hz':[350.,1800.],'band_pans':[-.85*direction,0.,.85*direction],'wet':1.,'pad_seconds':.25,'operation_seed':str(seed_for(seed,target,action)),'algorithm':'spectral-balance-1','tail_policy':'contained in current dry/convolution span before spatial delay'}
         elif action=='replace-material':
             clip=snapshot['clips'][int(r.integers(len(snapshot['clips'])))];e['source_id']=clip['id'];e['source_hash']=clip['source_hash'];e['source']=source_record(clip);length=clip['end_frame']-clip['start_frame'];e['transform']['period_frames']=min(length,e['transform']['period_frames']);e['transform']['offset_frame']=min(e['transform']['offset_frame']%length,length-e['transform']['period_frames']);e['source_range']={'cache_start_frame':e['transform']['offset_frame'],'cache_end_frame':length,'absolute_start_frame':clip['start_frame']+e['transform']['offset_frame'],'sampling':'periodic read'}
         elif action=='return-later':

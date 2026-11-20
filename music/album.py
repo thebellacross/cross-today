@@ -45,7 +45,7 @@ def download_archives(output,extension,limit=1024**3):
     return downloads
 
 def create_album(snapshot,cache,output,seed,day,number=0,settings=None,short=None,final_override=None,preference=None):
-    cfg=settings or config();g=dict(cfg['generation']);g['engine_ref']=cfg.get('engine_ref');rng=np.random.default_rng(seed)
+    cfg=settings or config();g=dict(cfg['generation']);g['engine_ref']=cfg.get('engine_ref');g['output_sample_rate']=48000;rng=np.random.default_rng(seed)
     output=Path(output);output.mkdir(parents=True,exist_ok=True)
     if not snapshot.get('clips'):raise ValueError('No valid sound materials; album not generated.')
     if not 0<g['track_seconds'][0]<=g['track_seconds'][1] or not 1<=g['tracks'][0]<=g['tracks'][1]<=30:raise ValueError('Invalid track duration or count range.')

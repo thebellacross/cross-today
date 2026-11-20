@@ -59,7 +59,7 @@ def test_simulated_learning_is_separate_grouped_and_reversible():
     model=train(records,'fixture',1,allow_simulated=True);assert model['weights'][17]>0 and model['label_origin']=='simulated-test-only';assert model['evaluation']['families']==4
     with pytest.raises(ValueError,match='simulated'):rank([{'id':'a','features':records[0]['features_A']}],model)
     empty=train([dict(f,revoked=True) for f in records],'fixture',2,allow_simulated=True);assert empty['labels']==0 and not any(empty['weights']);assert model['weights'][17]>0
-    extras=[dict(records[0],choice=c) for c in ['both','neither','unknown','technical']];excluded=train(extras,'fixture',3,allow_simulated=True);assert excluded['labels']==0
+    extras=[dict(records[0],choice=c) for c in ['both','neither','similar','unknown','technical']];excluded=train(extras,'fixture',3,allow_simulated=True);assert excluded['labels']==0
 
 def test_grouped_bootstrap_ranking_changes_in_opposite_contexts():
     records=[];pairs=[]
@@ -96,3 +96,31 @@ def test_replacing_loop_material_records_the_exact_rendered_fragment(materials):
     variant=mutate(p,'replace-material',target,44,snapshot);e=variant['events'][0];span=e['source_range'];params=e['transform']
     assert span['cache_start_frame']==params['offset_frame'];assert span['cache_end_frame']-span['cache_start_frame']==params['period_frames']
     assert span['absolute_end_frame']-span['absolute_start_frame']==params['period_frames'];render_plan(variant,snapshot,cache)
+
+@pytest.mark.parametrize('action,control',[('frequency-shift','processing_intensity'),('spectral-space','space_motion')])
+def test_frequency_candidates_preserve_timeline_source_and_other_stems(materials,action,control):
+    snapshot,cache,g,_=materials;p=plan_composition(snapshot,42,14,g);target=p['events'][1]['event_id']
+    with pytest.raises(ValueError,match='disabled'):mutate(p,action,target,3,snapshot)
+    p['controls'][control]=1.;locked=p['events'][0]['event_id'];locks={'events':[locked],'regions':[[0,.1]],'relations':[]}
+    v=mutate(p,action,target,3,snapshot,locks)
+    for old,new in zip(p['events'],v['events']):
+        for k in ['event_id','source_id','source_hash','start','duration','envelope','gain','pan']:assert old[k]==new[k]
+        if old['event_id']!=target:assert old==new
+    a,ra,sa=render_plan(p,snapshot,cache,True);b,rb,sb=render_plan(v,snapshot,cache,True)
+    assert not np.array_equal(a,b);assert np.array_equal(a[:800],b[:800]);assert sa.keys()==sb.keys()
+    assert all(np.array_equal(sa[k],sb[k]) for k in sa if k!=target);assert vector(p,ra)!=vector(v,rb)
+    if action=='spectral-space':
+        clips={c['id']:c for c in snapshot['clips']}
+        assert np.array_equal(render_event(p['events'][1],clips,cache,8000,'dry'),render_event(v['events'][1],clips,cache,8000,'dry'))
+
+def test_new_operation_export_records_current_engine_and_replays_output_rate(materials,tmp_path):
+    import subprocess,sys
+    from music.common import ROOT,save_json
+    from music.studio import experiment
+    snapshot,cache,g,_=materials;g['controls']['processing_intensity']=1.;parent=plan_composition(snapshot,19,4,g);parent['replay']['engine_hash']='frozen-older-engine'
+    settings=copy.deepcopy(config());settings['generation']=g;settings['engine_ref']='engine-test'
+    result=experiment(snapshot,cache,tmp_path/'experiment',{'seed':'22','profile':{'id':'test','rules':{}},'actions':['frequency-shift'],'wave_rate':48000},settings,parent=parent)
+    folder=tmp_path/'experiment';p=json.loads((folder/'c1-plan.json').read_text());assert p['origin_replay']['engine_hash']=='frozen-older-engine';assert p['replay']['engine_ref']=='engine-test'
+    assert p['replay']['engine_hash']==digest({f.name:file_hash(f) for f in sorted((ROOT/'music').glob('*.py'))})
+    output=tmp_path/'replayed.wav';r=subprocess.run([sys.executable,str(ROOT/'scripts/replay_plan.py'),'--plan',str(folder/'c1-plan.json'),'--snapshot',str(folder/'snapshot.json'),'--cache',str(cache),'--output',str(output)],capture_output=True,text=True)
+    assert r.returncode==0,r.stderr+r.stdout;assert file_hash(output)==result['candidates'][1]['audio_hash']

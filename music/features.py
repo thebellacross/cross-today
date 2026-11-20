@@ -1,7 +1,7 @@
 """Descriptive, time-resolved measurements. No descriptor is an aesthetic error."""
 import numpy as np
 
-def frames(audio, rate, hop_seconds=.25):
+def frames(audio, rate, hop_seconds=.25, fine=False):
     x=np.asarray(audio,float)
     if x.ndim==1:x=x[:,None]
     mono=x.mean(axis=1);hop=max(1,round(rate*hop_seconds));size=min(2048,max(32,len(x)))
@@ -15,6 +15,9 @@ def frames(audio, rate, hop_seconds=.25):
         result.append({'t':round(at/rate,6),'rms':rms,'centroid':float(np.dot(frequency,norm)/max(rate/2,1)),
                        'flatness':float(np.exp(np.log(spectrum).mean())/spectrum.mean()),'flux':float(np.maximum(norm-(previous if previous is not None else norm),0).sum()),
                        'crest':float(np.max(np.abs(part))/(rms+1e-9)),'side_ratio':side/(rms+1e-9),'bands':bands})
+        if fine:
+            from .frequency import descriptors
+            result[-1].update(descriptors(x[at:at+8192],rate))
         previous=norm
     return result
 

@@ -8,6 +8,7 @@ from .data import signal
 from .engine import spectral
 from .features import frames,summary
 from .plan import rng_for
+from .frequency import process as frequency_process,ANALYSIS_VERSION,OPERATION_SUPPORT
 
 SUPPORT={'tape':'stereo read positions preserved','reverse':'both channels reversed together','varispeed':'shared stereo read trajectory','playhead':'shared stereo read trajectory',
  'loop':'same recorded loop boundaries for both channels','hits':'same pulse mask for both channels','room':'stereo input convolved with explicitly downmixed recorded impulse',
@@ -73,7 +74,7 @@ def render_event(e,clips,cache,sr,processed=True):
         y=(1-p['wet'])*dry+p['wet']*wet
     elif tech=='data':
         v,_=signal(rng_for(p['control_seed']),n,kind='files',feed=np.clip(x*32767,-32768,32767).astype('<i2').tobytes());y=(1-p['wet'])*dry+p['wet']*stereo(v)*max(.01,float(np.sqrt(np.mean(x*x))))
-    for op in p['operations']:y=operation(y,op)
+    for op in p['operations']:y=frequency_process(y,op,sr) if op['kind'] in OPERATION_SUPPORT else operation(y,op)
     attack=min(len(y)//2,round(e['envelope']['attack']*sr));release=min(len(y)//2,round(e['envelope']['release']*sr))
     if attack:y[:attack]*=np.sin(np.linspace(0,np.pi/2,attack))[:,None]**2
     if release:y[-release:]*=np.sin(np.linspace(np.pi/2,0,release))[:,None]**2
@@ -84,6 +85,7 @@ def render_event(e,clips,cache,sr,processed=True):
         impulse=stereo(impulse).mean(axis=1)[p['ir_offset_frame']:p['ir_offset_frame']+p['ir_frames']]
         impulse=impulse*np.exp(-np.arange(len(impulse))/max(1,len(impulse)/5));impulse/=max(1e-9,np.linalg.norm(impulse))
         wet=convolve(y,impulse);y=np.pad(y,((0,len(wet)-len(y)),(0,0)))*(1-p['wet'])+wet*p['wet']
+    if e['space'].get('spectral'):y=frequency_process(y,e['space']['spectral'],sr)
     mid=y.mean(axis=1);side=(y[:,0]-y[:,1])*.5*e['space']['width'];y=np.column_stack((mid+side,mid-side))
     pan=np.linspace(e['pan']['start'],e['pan']['end'],len(y));y[:,0]*=np.sqrt(1-np.maximum(0,pan));y[:,1]*=np.sqrt(1+np.minimum(0,pan))
     tail=round(e['space']['tail_seconds']*sr);out=np.pad(y,((0,max(0,n+tail-len(y))),(0,0)))
@@ -111,7 +113,7 @@ def render_plan(plan,snapshot,cache,stems=False):
     for lane,e in enumerate(sorted(plan['events'],key=lambda e:e['event_id'])):
         y=render_event(e,clips,cache,sr);start=round(e['start']*sr);size=min(len(y),length-start)
         if size<=0:continue
-        mix[start:start+size]+=y[:size];measure=frames(y[:size],sr)
+        mix[start:start+size]+=y[:size];measure=frames(y[:size],sr,fine=True)
         if stems:saved[e['event_id']]=y[:size]
         reports.append({'event_id':e['event_id'],'section_id':e['section_id'],'start':e['start'],'duration':e['duration'],'tail_seconds':max(0,size/sr-e['duration']),'active_until':(start+size)/sr,'lane':lane,'role':e['role'],'action':e['action'],'relation_to':e['relation_to'],
             'name':e['source']['name'],'tags':e['source']['tags'],'source_hash':e['source_hash'],'clip_id':e['source_id'],'segment_start':e['source']['start_frame']/sr,'segment_end':e['source']['end_frame']/sr,'technique':e['transform']['technique'],
@@ -124,7 +126,7 @@ def render_plan(plan,snapshot,cache,stems=False):
     elif end['kind']=='tape-stop':
         pos=np.cumsum(np.linspace(1,.02,n));pos*=(n-1)/max(1,pos[-1]);mix[-n:]=read_at(mix[-n:],pos)*np.linspace(1,0,n)[:,None]
     clipped=int(np.sum(np.abs(mix)>1));mix=np.clip(mix,-1,1)
-    report={'plan_id':plan['plan_id'],'family_id':plan['family_id'],'form':plan['form'],'process':plan['process'],'lanes':len(reports),'sections':plan['sections'],'events':reports,'bends':plan['buses'],'plan':plan,'duration':length/sr,'clipped_samples':clipped,'mix_features':summary(frames(mix,sr))}
+    report={'plan_id':plan['plan_id'],'family_id':plan['family_id'],'form':plan['form'],'process':plan['process'],'lanes':len(reports),'sections':plan['sections'],'events':reports,'bends':plan['buses'],'plan':plan,'duration':length/sr,'clipped_samples':clipped,'mix_features':summary(frames(mix,sr)),'relation_analysis':ANALYSIS_VERSION}
     return mix,report,saved
 
 def hashlib_array(x):

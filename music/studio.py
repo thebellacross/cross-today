@@ -7,7 +7,7 @@ import numpy as np
 from .common import ROOT,save_json,digest,file_hash,run_audio
 from .plan import plan_composition,seed_for
 from .renderer import render_plan,render_event,hashlib_array
-from .preference import proposals,vector,select,rank,train,scoped_vector,FEATURES,LEGACY_FEATURES
+from .preference import proposals,vector,select,rank,train,scoped_vector,FEATURES,LEGACY_FEATURES,available_features
 from .frequency import ANALYSIS_VERSION
 
 def encode(audio,rate,path,wav=False,output_rate=None):
@@ -28,7 +28,9 @@ def generate(snapshot,cache,seed,seconds,settings,model=None,profile=None):
     base=plan_composition(snapshot,seed,seconds,settings,context=profile.get('id','open'))
     from .preference import constrain
     constrain(base,profile.get('rules',{}))
-    plans=proposals(base,snapshot,seed,limit=settings.get('candidate_count',3),rules=profile.get('rules',{}));rows=evaluate(plans,snapshot,cache);chosen,decision=select(rows,model,seed)
+    baseline=evaluate([base],snapshot,cache)[0]
+    plans=proposals(base,snapshot,seed,limit=settings.get('candidate_count',3),rules=profile.get('rules',{}),evidence=baseline['report']);rows=[baseline]+evaluate(plans[1:],snapshot,cache);chosen,decision=select(rows,model,seed)
+    decision['continuity_rule']=profile.get('rules',{}).get('continuity',{'mode':'off'})
     row=next(r for r in rows if r['id']==chosen);row['report']['selection']=decision
     # No private profile notes, learned weights or feedback labels enter public scores.
     row['report']['model']={'id':model['id'] if model else None,'profile_id':profile.get('id'),'profile_revision':profile.get('revision',0)}
@@ -45,9 +47,10 @@ def experiment(snapshot,cache,folder,request,settings,model=None,parent=None):
     parent['replay']={'engine_ref':settings['engine_ref'],'engine_hash':digest({f.name:file_hash(f) for f in sorted((ROOT/'music').glob('*.py'))}),'numpy':np.__version__,'configuration':g,'model_version':g['model_version'],'parent_plan_id':origin_id}
     parent['output_sample_rate']=request.get('wave_rate',parent.get('output_sample_rate',48000));parent['locks']=request.get('locks',parent['locks']);parent.pop('plan_id',None);parent['plan_id']=digest(parent)
     actions=request.get('actions') or None
-    plans=proposals(parent,snapshot,seed,locks=parent['locks'],actions=actions,limit=3,rules=profile.get('rules',{}),targets=request.get('targets'))
+    frozen=evaluate([parent],snapshot,cache)[0]
+    plans=proposals(parent,snapshot,seed,locks=parent['locks'],actions=actions,limit=3,rules=profile.get('rules',{}),targets=request.get('targets'),evidence=frozen['report'])
     if len(plans)<2:raise ValueError('No allowed variation remains. Change a decision or the explicit locks.')
-    evaluated=evaluate(plans,snapshot,cache);rows=[];heard=set()
+    evaluated=[frozen]+evaluate(plans[1:],snapshot,cache);rows=[];heard=set()
     for row in evaluated:
         audio_id=hashlib_array(row['audio'])
         if audio_id not in heard:rows.append(row);heard.add(audio_id)
@@ -105,7 +108,7 @@ def cloud_task(cloud,task_id):
                     if key not in loaded:
                         blob=cloud.api('/internal/permanent/lab/'+key+'-report.json');loaded[key]=json.loads(blob) if isinstance(blob,bytes) else blob
                     report=loaded[key];f['features_'+label]=scoped_vector(report['plan'],report,f.get('scope'))
-                    f['available_features_'+label]=len(FEATURES) if report.get('relation_analysis')==ANALYSIS_VERSION else len(LEGACY_FEATURES)
+                    f['available_features_'+label]=available_features(report)
             model=train(records,task['profile']['id'],task['dataset_revision']);save_json(folder/'model.json',model);save_json(folder/'training.json',{'records':records,'dataset_revision':task['dataset_revision'],'model':model['id'],'evaluation':model['evaluation']})
             files={}
             for name in ('model.json','training.json'):

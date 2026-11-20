@@ -9,10 +9,11 @@ from .engine import spectral
 from .features import frames,summary
 from .plan import rng_for
 from .frequency import process as frequency_process,ANALYSIS_VERSION,OPERATION_SUPPORT
+from .continuity import activity,diagnose
 
 SUPPORT={'tape':'stereo read positions preserved','reverse':'both channels reversed together','varispeed':'shared stereo read trajectory','playhead':'shared stereo read trajectory',
  'loop':'same recorded loop boundaries for both channels','hits':'same pulse mask for both channels','room':'stereo input convolved with explicitly downmixed recorded impulse',
- 'mosaic':'stereo grains with shared selection','spectral':'per-channel resynthesis with shared control seed','cross':'per-channel spectral multiplication','freeze':'per-channel magnitude snapshots with shared phase stream','weather':'per-channel spectral stretch with shared phase stream','data':'explicit mono byte sonification, then duplicated'}
+ 'mosaic':'stereo grains with shared selection','spectral':'per-channel resynthesis with shared control seed','cross':'per-channel spectral multiplication','freeze':'per-channel magnitude snapshots with shared phase stream','weather':'per-channel spectral stretch with shared phase stream','data':'explicit mono byte sonification, then duplicated','phrase':'recorded one-shot stereo ranges and crossfades; no source silence deletion'}
 
 def stereo(x):return np.column_stack((x,x)) if x.ndim==1 else x.copy()
 def read_at(x,positions):return np.column_stack([np.interp(positions%len(x),np.arange(len(x)),x[:,c]) for c in range(2)])
@@ -52,18 +53,29 @@ def render_event(e,clips,cache,sr,processed=True):
     if e['channel_mode']=='mono':x[:]=x.mean(axis=1)[:,None]
     elif e['channel_mode']!='preserve':raise ValueError('Unknown channel path.')
     p=e['transform'];n=max(1,round(e['duration']*sr));tech=p['technique'];start=p['offset_frame'];positions=start+np.arange(n)*p['speed']
-    if not processed:return read_at(x,start+np.arange(n))
+    if not processed and tech!='phrase':return read_at(x,start+np.arange(n))
     control=None
     if tech in ('varispeed','playhead','mosaic','spectral','cross','freeze','weather','data'):
         control,_=signal(rng_for(p['control_seed']),n)
     if tech=='reverse':positions=start-np.arange(n)*p['speed']
     if tech=='varispeed':positions=start+np.cumsum(p['speed']*2**(control*.6))
     if tech=='playhead':positions=(control+1)*.5*(len(x)-1)
-    dry=read_at(x,positions);y=dry.copy()
-    if tech in ('loop','hits'):
+    dry=read_at(x,positions);y=dry.copy();input_audio=dry
+    if tech=='phrase':
+        y=np.zeros((n,2))
+        for piece in p['phrases']:
+            a,b,at=(int(piece[k]) for k in ('source_start_frame','source_end_frame','at_frame'))
+            if not 0<=a<b<=len(x) or at<0:raise ValueError('Recorded phrase range exceeds the source.')
+            fragment=x[a:b].copy();attack=min(len(fragment)//2,piece['fade_in_frames']);release=min(len(fragment)//2,piece['fade_out_frames'])
+            if attack:fragment[:attack]*=np.sin(np.linspace(0,np.pi/2,attack))[:,None]**2
+            if release:fragment[-release:]*=np.sin(np.linspace(np.pi/2,0,release))[:,None]**2
+            length=min(n-at,len(fragment))
+            if length>0:y[at:at+length]+=fragment[:length]*piece['gain']
+        input_audio=y.copy()
+    elif tech in ('loop','hits'):
         period=p['period_frames'];fragment=x[start:start+period]
         if len(fragment)!=period:raise ValueError('Recorded loop range exceeds cached source.')
-        y=read_at(fragment,np.arange(n)*(1+p['phase_creep']))
+        y=read_at(fragment,np.arange(n)*(1+p['phase_creep']));input_audio=y.copy()
         if tech=='hits':y*=np.array(p['hits_mask'])[(np.arange(n)//period)%len(p['hits_mask'])][:,None]
     elif tech in ('spectral','cross','freeze','weather'):
         wet=np.column_stack([spectral(dry[:,i],control,tech,rng_for(p['spectral_seed']),sr) for i in range(2)]);y=(1-p['wet'])*dry+p['wet']*wet
@@ -74,6 +86,7 @@ def render_event(e,clips,cache,sr,processed=True):
         y=(1-p['wet'])*dry+p['wet']*wet
     elif tech=='data':
         v,_=signal(rng_for(p['control_seed']),n,kind='files',feed=np.clip(x*32767,-32768,32767).astype('<i2').tobytes());y=(1-p['wet'])*dry+p['wet']*stereo(v)*max(.01,float(np.sqrt(np.mean(x*x))))
+    if processed=='input' or not processed:return input_audio
     for op in p['operations']:y=frequency_process(y,op,sr) if op['kind'] in OPERATION_SUPPORT else operation(y,op)
     attack=min(len(y)//2,round(e['envelope']['attack']*sr));release=min(len(y)//2,round(e['envelope']['release']*sr))
     if attack:y[:attack]*=np.sin(np.linspace(0,np.pi/2,attack))[:,None]**2
@@ -108,17 +121,19 @@ def render_plan(plan,snapshot,cache,stems=False):
         for cid in [e['source_id']]+([e['transform']['ir_clip_id']] if e['transform']['technique']=='room' else []):
             if cid not in checked and file_hash(Path(cache)/clips[cid]['cache_file'])!=clips[cid]['cache_sha256']:raise ValueError('Derived audio checksum differs from the frozen snapshot.')
             checked.add(cid)
-    sr=plan['sample_rate'];length=round((plan['duration']+3.)*sr);mix=np.zeros((length,2));reports=[];saved={}
+    sr=plan['sample_rate'];length=round((plan['duration']+3.)*sr);mix=np.zeros((length,2));reports=[];saved={};material_activity={}
     # Stable summation order is part of replay. Adding an event never rerolls others.
     for lane,e in enumerate(sorted(plan['events'],key=lambda e:e['event_id'])):
         y=render_event(e,clips,cache,sr);start=round(e['start']*sr);size=min(len(y),length-start)
         if size<=0:continue
         mix[start:start+size]+=y[:size];measure=frames(y[:size],sr,fine=True)
         if stems:saved[e['event_id']]=y[:size]
+        if e['source_id'] not in material_activity:
+            raw,_=read_clip(Path(cache)/clips[e['source_id']]['cache_file'],native=True);material_activity[e['source_id']]=activity(raw,sr)
         reports.append({'event_id':e['event_id'],'section_id':e['section_id'],'start':e['start'],'duration':e['duration'],'tail_seconds':max(0,size/sr-e['duration']),'active_until':(start+size)/sr,'lane':lane,'role':e['role'],'action':e['action'],'relation_to':e['relation_to'],
             'name':e['source']['name'],'tags':e['source']['tags'],'source_hash':e['source_hash'],'clip_id':e['source_id'],'segment_start':e['source']['start_frame']/sr,'segment_end':e['source']['end_frame']/sr,'technique':e['transform']['technique'],
             'gain':e['gain'],'pan':e['pan'],'source_offset_frame':e['transform']['offset_frame'],'speed':1+e['transform']['phase_creep'] if e['transform']['technique'] in ('loop','hits') else e['transform']['speed'],
-            'operations':[o['kind'] for o in e['transform']['operations']],'data_family':'seeded control','channel_policy':SUPPORT[e['transform']['technique']], 'processed_features':summary(measure),'feature_frames':measure,'stem_hash':hashlib_array(y[:size])})
+            'operations':[o['kind'] for o in e['transform']['operations']],'data_family':'seeded control','channel_policy':SUPPORT[e['transform']['technique']], 'processed_features':summary(measure),'feature_frames':measure,'stem_hash':hashlib_array(y[:size]),'activity':activity(y[:size],sr),'input_activity':activity(render_event(e,clips,cache,sr,'input'),sr)})
     for b in plan['buses']:
         a=max(0,round(b['start']*sr));z=min(length,round(b['end']*sr));phase=float(rng_for(b['operation_seed']).uniform(0,2*np.pi));gate=(np.sin(np.arange(z-a)/sr*2*np.pi/b['period']+phase)>0).astype(float);mix[a:z]*=(1-b['wet']+b['wet']*gate)[:,None]
     mix*=plan['master_gain'];end=plan['ending'];n=min(length,round(end['seconds']*sr))
@@ -127,6 +142,7 @@ def render_plan(plan,snapshot,cache,stems=False):
         pos=np.cumsum(np.linspace(1,.02,n));pos*=(n-1)/max(1,pos[-1]);mix[-n:]=read_at(mix[-n:],pos)*np.linspace(1,0,n)[:,None]
     clipped=int(np.sum(np.abs(mix)>1));mix=np.clip(mix,-1,1)
     report={'plan_id':plan['plan_id'],'family_id':plan['family_id'],'form':plan['form'],'process':plan['process'],'lanes':len(reports),'sections':plan['sections'],'events':reports,'bends':plan['buses'],'plan':plan,'duration':length/sr,'clipped_samples':clipped,'mix_features':summary(frames(mix,sr)),'relation_analysis':ANALYSIS_VERSION}
+    report['continuity']=diagnose(mix,sr,plan,reports);report['material_activity']=material_activity
     return mix,report,saved
 
 def hashlib_array(x):

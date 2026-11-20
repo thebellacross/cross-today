@@ -5,10 +5,17 @@ from .common import digest
 from .plan import rng_for, mutate
 from .frequency import EXTRA_FEATURES,ANALYSIS_VERSION,pair_descriptors
 
-VERSION='relational-bt-2'
+from .continuity import FEATURES as CONTINUITY_FEATURES,VERSION as ACTIVITY_VERSION,descriptors as continuity_descriptors
+
+VERSION='relational-bt-3'
 LEGACY_FEATURES=['density','rest','entry_spacing','return_spacing','development','duration_spread','foreground_share','role_contrast','band_overlap','pan_separation','tail_occupancy','processing','bit_damage','loop_share','stereo','motion','foreground_noise','conflict_foreground','dense_transients','return_contrast','space_with_overlap','change_with_noise']
-FEATURES=LEGACY_FEATURES+EXTRA_FEATURES
-ACTIONS=['delay-entry','earlier-entry','continue','withdraw','depth','space','processing','replace-material','repeat','return-later','swap-sections','frequency-shift','spectral-space']
+FREQUENCY_FEATURES=LEGACY_FEATURES+EXTRA_FEATURES
+FEATURES=FREQUENCY_FEATURES+CONTINUITY_FEATURES
+FEATURE_COUNTS=(len(LEGACY_FEATURES),len(FREQUENCY_FEATURES),len(FEATURES))
+
+def available_features(report):
+    return len(FEATURES) if report.get("continuity",{}).get("version")==ACTIVITY_VERSION else len(FREQUENCY_FEATURES) if report.get("relation_analysis")==ANALYSIS_VERSION else len(LEGACY_FEATURES)
+ACTIONS=['delay-entry','earlier-entry','continue','withdraw','depth','space','processing','replace-material','repeat','return-later','swap-sections','frequency-shift','spectral-space','phrase-connect','bridge-gap']
 
 def vector(plan,report):
     events=report['events'];duration=plan['duration'];n=max(1,len(events));pe={e['event_id']:e for e in plan['events']};features={e['event_id']:e['processed_features'] for e in events}
@@ -49,10 +56,10 @@ def vector(plan,report):
     bits=avg([sum(o['kind'] in ('bitcrush','fold','overflow','xor','bit-mask','rotate','gray','byte-swap') for o in pe[e['event_id']]['transform']['operations']) for e in events])
     values=[density,avg(np.array(active)==0),avg(intervals)/duration,avg(returns),development,float(np.std([e['duration']/duration for e in events])),sum(e['role']=='foreground' for e in events)/n,avg(contrast),overlap,avg(pans),tail,proc,bits,sum(e['technique'] in ('loop','hits') for e in events)/n,avg([f['side_ratio'] for f in features.values()]),avg([abs(e['pan']['end']-e['pan']['start']) for e in pe.values()]),noise,overlap*noise,avg(transients),avg(return_contrast),overlap*(tail+avg(pans)),development*noise]
     fine=[avg([p[i] for p in partials]) for i in range(5)]+[avg(correlations)]+[avg([p[i] for p in partials]) for i in (5,6)]
-    return np.clip(np.nan_to_num(values+fine),-4,4).tolist()
+    return np.clip(np.nan_to_num(values+fine+continuity_descriptors(report)),-4,4).tolist()
 
 def padded(values):
-    if len(values) not in (len(LEGACY_FEATURES),len(FEATURES)):raise ValueError('Unknown relation feature schema.')
+    if len(values) not in FEATURE_COUNTS:raise ValueError('Unknown relation feature schema.')
     out=np.pad(np.asarray(values,float),(0,len(FEATURES)-len(values)))
     if not np.isfinite(out).all():raise ValueError('Non-finite relation features.')
     return out
@@ -76,7 +83,7 @@ def train(records,profile,revision,allow_simulated=False):
     differences=[];observed=np.zeros(len(FEATURES),int)
     for f in valid:
         count=min(f.get('available_features_A',len(f['features_A'])),f.get('available_features_B',len(f['features_B'])))
-        if count not in (len(LEGACY_FEATURES),len(FEATURES)):raise ValueError('Unknown observed feature schema.')
+        if count not in FEATURE_COUNTS:raise ValueError('Unknown observed feature schema.')
         delta=padded(f['features_A'])-padded(f['features_B']);delta[count:]=0;observed[:count]+=1;differences.append(delta)
     x=np.asarray(differences);y=np.array([f['choice']=='A' for f in valid],float)
     groups=sorted(set(f['family_id'] for f in valid));seed=digest({'revision':revision,'profile':profile,'records':valid});r=rng_for(seed,'bootstrap');weights=fit(x,y);ensemble=[]
@@ -91,7 +98,7 @@ def train(records,profile,revision,allow_simulated=False):
     model['id']=digest(model);return model
 
 def rank(candidates,model,allow_simulated=False):
-    compatible=not model or (model['algorithm']==VERSION and model['feature_names']==FEATURES) or (model['algorithm']=='relational-bt-1' and model['feature_names']==LEGACY_FEATURES)
+    compatible=not model or (model['algorithm']==VERSION and model['feature_names']==FEATURES) or (model['algorithm']=='relational-bt-2' and model['feature_names']==FREQUENCY_FEATURES) or (model['algorithm']=='relational-bt-1' and model['feature_names']==LEGACY_FEATURES)
     if model and (not compatible or (model.get('label_origin')!='human' and not allow_simulated)):raise ValueError('Incompatible or simulated personal model.')
     w=padded(model['weights']) if model else np.zeros(len(FEATURES));result=[];base=padded(candidates[0]['features'])
     for c in candidates:
@@ -117,15 +124,23 @@ def constrain(plan,rules):
         if rules.get('preserve_channels') and (e['channel_mode']!='preserve' or e['space']['width']!=1.):raise ValueError('A channel lock was violated.')
     return plan
 
-def proposals(parent,snapshot,seed,locks=None,actions=None,limit=3,rules=None,targets=None):
+def proposals(parent,snapshot,seed,locks=None,actions=None,limit=3,rules=None,targets=None,evidence=None):
     rows=[parent];r=rng_for(seed,'proposal-order')
     if actions is None:
         automatic=ACTIONS if parent['controls']['structure_randomness'] else ['processing','space','frequency-shift','spectral-space']
+        if (rules or {}).get('continuity',{}).get('mode')=='off':automatic=[a for a in automatic if a not in ('bridge-gap','phrase-connect')]
         actions=list(r.permutation(automatic))
+        if parent['controls']['structure_randomness'] and (rules or {}).get('continuity',{}).get('mode')=='propose':
+            actions=['bridge-gap','phrase-connect']+[a for a in actions if a not in ('bridge-gap','phrase-connect')]
     targets=[e['event_id'] for e in parent['events'] if (targets is None or e['event_id'] in targets) and e['event_id'] not in (locks or parent['locks']).get('events',[])]
     for action in actions:
         for target in list(r.permutation(targets)):
-            try:p=constrain(mutate(parent,action,target,seed,snapshot,locks),rules or {})
+            try:
+                if action in ('phrase-connect','bridge-gap'):
+                    from .continuity import change
+                    p=change(parent,action,target,seed,snapshot,evidence,locks,rules)
+                else:p=mutate(parent,action,target,seed,snapshot,locks)
+                p=constrain(p,rules or {})
             except ValueError:continue
             if p['events']==parent['events']:continue
             rows.append(p);break
@@ -154,4 +169,5 @@ def scoped_vector(plan,report,scope=None):
         from .features import summary
         row['processed_features']=summary(row['feature_frames']);r['events'].append(row);original=copy.deepcopy(next(v for v in plan['events'] if v['event_id']==e['event_id']));original['start']=row['start'];original['duration']=row['duration'];p['events'].append(original)
     p['sections']=[{**s,'start':max(lo,s['start'])-lo,'end':min(hi,s['end'])-lo} for s in p['sections'] if s['end']>lo and s['start']<hi]
-    return vector(p,r)
+    v=vector(p,r);v[len(FREQUENCY_FEATURES):]=continuity_descriptors(report,lo,hi)
+    return np.clip(v,-4,4).tolist()

@@ -5,7 +5,7 @@ import math
 import numpy as np
 from .common import digest,ROOT,file_hash
 
-VERSION='composition-2'
+VERSION='composition-3'
 CONTROL_DEFAULTS={'structure_randomness':1.,'processing_intensity':.35,'bit_damage':.2,'bus_intervention':.15,'loop_activity':.6,'space_motion':.35,'dropout_probability':.0,'stereo_width':1.}
 PROCESSES=['accumulation','erosion','sustained-density','alternation','interruption','return','transformation','suspension']
 TECHNIQUES=['tape','reverse','varispeed','playhead','mosaic','spectral','cross','room','freeze','weather','data','loop','hits']
@@ -19,6 +19,9 @@ def controls(settings):
 
 def source_record(c):return {k:c[k] for k in ('id','source_hash','start_frame','end_frame','sample_rate','cache_sha256','name','tags','seconds','channels') if k in c}
 def source_span(clip,params):
+    if params['technique']=='phrase':
+        pieces=[{**p,'absolute_start_frame':clip['start_frame']+p['source_start_frame'],'absolute_end_frame':clip['start_frame']+p['source_end_frame']} for p in params['phrases']]
+        return {'pieces':pieces,'sampling':'explicit one-shot stereo excerpts; timing, fades and short rests recorded'}
     loop=params['technique'] in ('loop','hits');start=params['offset_frame'] if loop else 0
     end=start+params['period_frames'] if loop else clip['end_frame']-clip['start_frame']
     return {'cache_start_frame':start,'cache_end_frame':end,'absolute_start_frame':clip['start_frame']+start,'absolute_end_frame':clip['start_frame']+end,
@@ -45,6 +48,7 @@ def event(seed,eid,section,clip,start,duration,role,tech,c,clips):
             'control_seed':str(seed_for(seed,eid,'control')),'spectral_seed':str(seed_for(seed,eid,'spectral')),'grain_seed':str(seed_for(seed,eid,'grains')),
             'grain_frames':int(r.choice([512,1024,2048])),'hits_mask':mask,'ir_clip_id':ir['id'],'ir_offset_frame':int(r.integers(0,max(1,ir['end_frame']-ir['start_frame']-irlen+1))),'ir_frames':irlen,
             'wet':float(r.uniform(.25,.8)) if tech!='tape' else 0.,'operations':processing(seed,eid,c)}
+    if tech=='phrase':params['phrases']=[{'at_frame':0,'source_start_frame':at,'source_end_frame':at+min(period,round(duration*sr)),'fade_in_frames':round(.008*sr),'fade_out_frames':round(.04*sr),'gain':1.}]
     if tech=='room':tail=max(tail,irlen/sr)
     return {'event_id':eid,'section_id':section,'source_id':clip['id'],'source_hash':clip['source_hash'],'source':source_record(clip),
             'start':round(start,6),'duration':round(duration,6),'source_range':source_span(clip,params),
@@ -115,7 +119,7 @@ def plan_composition(snapshot,seed,seconds,settings,context='open',family=None):
     family=family or digest({'seed':str(seed),'snapshot':snapshot['id']})[:24]
     p={'schema':2,'planner':VERSION,'seed':str(seed),'family_id':family,'parent_id':None,'snapshot':snapshot['id'],'context':context,'sample_rate':settings['sample_rate'],'duration':float(seconds),
        'form':form,'process':process,'controls':c,'sections':sections,'events':events,'buses':buses,'ending':{'kind':str(rng_for(seed,'work','ending').choice(['fade','hard','tape-stop'] if c['bus_intervention'] else ['fade','hard'])) if c['structure_randomness'] else 'fade','seconds':min(3.,seconds/10)},'master_gain':.7,
-       'locks':{'events':[],'regions':[],'relations':[]},'decision_log':[{'choice':'process','value':process,'stream':'work','origin':'unbiased exploration; no personal evidence'}], 'output_sample_rate':settings.get('output_sample_rate',settings['sample_rate'])}
+       'rests':[{'start':s['start'],'end':s['start']+s['transition']['seconds'],'reason':'planned drop transition'} for s in sections if s['transition']['kind']=='drop'],'locks':{'events':[],'regions':[],'relations':[]},'decision_log':[{'choice':'process','value':process,'stream':'work','origin':'unbiased exploration; no personal evidence'}], 'output_sample_rate':settings.get('output_sample_rate',settings['sample_rate'])}
     p['replay']={'engine_ref':settings.get('engine_ref'),'engine_hash':digest({f.name:file_hash(f) for f in sorted((ROOT/'music').glob('*.py'))}),'numpy':np.__version__,'configuration':settings,'model_version':settings.get('model_version')}
     p['plan_id']=digest(p);return p
 
@@ -171,9 +175,28 @@ def mutate(parent,action,target,seed,snapshot,locks=None):
         elif action=='repeat':
             new=copy.deepcopy(e);new['event_id']='variation-'+digest({'parent':parent['plan_id'],'seed':str(seed),'target':target})[:16];new['action']='return';new['relation_to']=target;new['start']=min(p['duration']-.1,e['start']+e['duration']+2);new['duration']=min(new['duration'],p['duration']-new['start']);p['events'].append(new);changed=[new['event_id']]
         else:raise ValueError('Unknown structural change.')
+    return finish_mutation(parent,p,changed,action,snapshot,locked)
+
+def finish_mutation(parent,p,changed,action,snapshot,locked):
     originals={e['event_id']:e for e in parent['events']};clips={c['id']:c for c in snapshot['clips']}
     for e in p['events']:
-        if e['event_id'] in changed:e['source_range']=source_span(clips[e['source_id']],e['transform'])
+        if e['event_id'] in changed:
+            clip=clips[e['source_id']];params=e['transform']
+            if params['technique']=='phrase':
+                size=clip['end_frame']-clip['start_frame'];n=round(e['duration']*p['sample_rate']);pieces=copy.deepcopy(params['phrases'])
+                if action=='continue' and pieces:
+                    cycle=max(v['at_frame']+v['source_end_frame']-v['source_start_frame'] for v in pieces)+round(.12*p['sample_rate'])
+                    original=copy.deepcopy(pieces)
+                    for offset in range(cycle,n,cycle):pieces.extend({**v,'at_frame':v['at_frame']+offset} for v in original)
+                kept=[]
+                for v in pieces:
+                    if v['at_frame']>=n:continue
+                    length=v['source_end_frame']-v['source_start_frame'];a=v['source_start_frame']%size if action=='replace-material' else v['source_start_frame'];b=min(size,a+length,a+n-v['at_frame'])
+                    if b>a:kept.append({**v,'source_start_frame':a,'source_end_frame':b})
+                params['phrases']=kept
+                if not kept:raise ValueError('No phrase remains in the changed event.')
+                params['offset_frame']=kept[0]['source_start_frame']
+            e['source_range']=source_span(clip,params)
     # A return changes its responding events; a repeat creates a new event.
     # Audit those actual events instead of logging the unchanged target as changed.
     changes=[{'event':e['event_id'],'action':action,'before':copy.deepcopy(originals.get(e['event_id'])),'after':copy.deepcopy(e)} for e in p['events'] if e['event_id'] in changed]

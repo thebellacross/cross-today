@@ -30,7 +30,7 @@ def test_segment_identity_and_silent_rejection(tmp_path):
 
 @pytest.mark.parametrize('form',['chance','fusion','loops','baseline','fontana','automaton','drift'])
 def test_forms_are_deterministic_and_use_real_recordings(tmp_path,form):
-    p=recording(tmp_path);m=import_one(p,tmp_path/'cache',{k:v for k,v in config()['import'].items() if k!='channels'});g=dict(config()['generation'],form=form)
+    p=recording(tmp_path);m=import_one(p,tmp_path/'cache',{k:v for k,v in config()['import'].items() if k not in ('channels','preparation')});g=dict(config()['generation'],form=form)
     a,score=render(m['clips'],tmp_path/'cache',901,2.5,g);b,s2=render(m['clips'],tmp_path/'cache',901,2.5,g)
     assert np.array_equal(a,b) and score==s2 and np.isfinite(a).all() and np.max(np.abs(a))>0
     assert score['events'] and all(e['source_hash']==file_hash(p) for e in score['events'])

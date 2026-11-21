@@ -13,6 +13,9 @@ ADAPTER_VERSION = "pcm16-mono-2"
 NATIVE_ADAPTER_VERSION = "pcm16-native-3"
 
 def adapter_version(settings):
+    if settings.get('preparation',{}).get('mode')=='remove-digital-silence':
+        from .preparation import VERSION
+        return VERSION
     return NATIVE_ADAPTER_VERSION if settings.get("channels")=="preserve" else ADAPTER_VERSION
 
 def decode(path, rate):
@@ -72,7 +75,8 @@ def import_one(path, cache, settings, name=None, tags=None, expected_hash=None):
     label = public_name(name or path.name)
     if manifest_path.exists():
         m = json.loads(manifest_path.read_text())
-        if all((cache / c["cache_file"]).exists() for c in m["clips"]):
+        prepared_ok=not m.get('prepared_file') or ((cache/m['prepared_file']).exists() and file_hash(cache/m['prepared_file'])==m['preparation']['sha256'])
+        if prepared_ok and all((cache / c["cache_file"]).exists() for c in m["clips"]):
             for c in m["clips"]:
                 c["name"], c["tags"] = label, tags or []
                 actual=file_hash(cache/c['cache_file'])
@@ -87,9 +91,17 @@ def import_one(path, cache, settings, name=None, tags=None, expected_hash=None):
     minimum = max(1, int(profile["minimum_seconds"] * rate))
     if segment < minimum or overlap < 0 or overlap >= segment:
         raise ValueError("Invalid segmentation settings.")
-    clips = [];audible=False
+    clips = [];audible=False;prepared=None;decode_path=path
     channels=2 if settings.get("channels")=="preserve" else 1
-    for start,end,x in segments(path,rate,segment,overlap,minimum,channels):
+    if settings.get('preparation',{}).get('mode')=='remove-digital-silence':
+        from .preparation import prepare,prepared_name,source_mapping
+        decode_path=directory/prepared_name(label);sidecar=directory/'preparation.json'
+        if sidecar.exists():
+            prepared=json.loads(sidecar.read_text())
+            if not decode_path.exists() or file_hash(decode_path)!=prepared['sha256']:prepared=None
+        if prepared is None:
+            prepared=prepare(path,decode_path,rate,channels,settings['preparation']);prepared['filename']=decode_path.name;save_json(sidecar,prepared)
+    for start,end,x in segments(decode_path,rate,segment,overlap,minimum,channels):
         audible=audible or bool(np.any(x))
         clip_id = digest({"source": sha, "start_frame": start, "end_frame": end, "profile": profile})
         wav = directory / (clip_id + ".wav")
@@ -101,6 +113,9 @@ def import_one(path, cache, settings, name=None, tags=None, expected_hash=None):
         c = {"id": clip_id, "source_hash": sha, "name": label, "tags": tags or [], "start_frame": start, "end_frame": end,
              "start": start/rate, "end": end/rate, "seconds": (end-start)/rate, "sample_rate": rate,
              "format": ("stereo" if channels==2 else "mono")+" PCM16 WAV", "channels": channels, "adapter": adapter_version(settings), "cache_file": str(wav.relative_to(cache)), "cache_sha256":file_hash(wav), "features": feature}
+        if prepared:
+            c['preparation']={k:v for k,v in prepared.items() if k not in ('mapping','excluded')}
+            c['source_mapping']=source_mapping(prepared,start,end)
         if channels==2:
             from .features import frames
             c["analysis"]=frames(x.astype(float)/32768,rate)
@@ -109,6 +124,7 @@ def import_one(path, cache, settings, name=None, tags=None, expected_hash=None):
         clips.append(c)
     if not clips or not audible:raise ValueError('Source is empty or digitally silent; no substitute audio was used.')
     m = {"source_hash": sha, "profile": profile, "clips": clips}
+    if prepared:m.update(preparation=prepared,prepared_file=str(decode_path.relative_to(cache)))
     save_json(manifest_path, m)
     return m
 

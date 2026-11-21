@@ -193,9 +193,13 @@ class Cloud:
                     self.api('/internal/sources/'+source['hash'],'PUT',{'ok':False});raise RuntimeError('One selected recording failed validation; fix or disable it before a new snapshot.')
                 for c in saved['clips']:
                     with open(cache/c['cache_file'],'rb') as f:self.api(f'/internal/cache/{key}/{c["id"]}.wav','PUT',raw=f)
+                if saved.get('prepared_file'):
+                    with open(cache/saved['prepared_file'],'rb') as f:self.api(f'/internal/cache/{key}/prepared.wav','PUT',raw=f)
                 self.api(f'/internal/cache/{key}/manifest.json','PUT',raw=canonical(saved))
                 target.unlink() # Only this ephemeral Actions download; the original remains in private cloud storage.
-            self.api('/internal/sources/'+source['hash'],'PUT',{'ok':True,'clips':len(saved['clips'])});clips.extend(saved['clips'])
+            prep=saved.get('preparation');summary={k:prep[k] for k in ('version','sample_rate','original_frames','prepared_frames','removed_frames','filename','sha256','policy')} if prep else None
+            if summary:summary['key']=key
+            self.api('/internal/sources/'+source['hash'],'PUT',{'ok':True,'clips':len(saved['clips']),'preparation':summary,'import_settings':job['config']['import']});clips.extend(saved['clips'])
         clips=sorted({c['id']:c for c in clips}.values(),key=lambda c:(c['source_hash'],c['start_frame']))
         snapshot={'schema':1,'import':job['config']['import'],'clips':clips};snapshot['id']=digest(snapshot)
         if not clips:raise RuntimeError('No valid recordings; publication stopped without fallback.')

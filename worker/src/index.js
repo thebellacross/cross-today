@@ -1,4 +1,4 @@
-import {handleStudio,preferenceSnapshot,dispatchStudio} from './studio.js';
+import {handleStudio,preferenceSnapshot,dispatchStudio,queuePreparation} from './studio.js';
 import {SignJWT, jwtVerify} from 'jose';
 import defaults from '../../config.json';
 import {GitHubBucket, reserveWrite} from './storage.js';
@@ -166,6 +166,7 @@ export class Coordinator {
           cfg.generation.controls={...defaults.generation.controls,dropout_probability:cfg.generation.garble||0,stereo_width:cfg.generation.stereo_width??1};
           cfg.import.channels='preserve';cfg.preference_profile='open';changed=true;
         }
+        if(!cfg.import.preparation&&defaults.import.preparation){cfg.import.preparation=structuredClone(defaults.import.preparation);changed=true;}
         if(changed){await this.store.put('config',cfg);await this.store.put('config-revision',(await this.store.get('config-revision')||0)+1);await this.store.put('config-upgrade:'+id(),{before,after:cfg.engine_ref,time:Date.now()});}
         return json({ok:true,engine_ref:cfg.engine_ref,listening_transport:'private-transport-2',changed});});
     }
@@ -243,6 +244,10 @@ export class Coordinator {
         return json({ok:true,hash:u.hash,status:'pending'});});
       }
     }
+    if((match=p.match(/^\/api\/sources\/([0-9a-f]{64})\/prepared$/))&&['GET','HEAD'].includes(method)){
+      const source=await this.store.get('source:'+match[1]),prep=source?.preparation;if(!prep?.key)return json({error:'素材尚未整理完成。'},409);
+      const r=await privateObject(this.sources,`derived/${prep.key}/prepared.wav`,request,prep.filename);r.headers.set('Content-Disposition',`attachment; filename*=UTF-8''${encodeURIComponent(prep.filename)}`);return r;
+    }
     if((match=p.match(/^\/api\/sources\/([0-9a-f]{64})$/))&&method==='PUT') {
       const b=await body();await this.atomic(async()=>{const s=await this.store.get('source:'+match[1]);if(!s)return;if(typeof b.enabled==='boolean')s.enabled=b.enabled;if(Array.isArray(b.tags))s.tags=b.tags.map(x=>String(x).slice(0,60)).slice(0,20);await this.store.put('source:'+match[1],s);});return json({ok:true});
     }
@@ -269,6 +274,7 @@ export class Coordinator {
     if((match=p.match(/^\/api\/exports\/([0-9a-f-]{36})$/))) {const e=await this.store.get('export:'+match[1]);if(!e)return json({error:'Not found'},404);if(url.searchParams.has('download')&&e.status==='ready'){const name=url.searchParams.get('file')||'release.zip';if(!(e.files||['release.zip']).includes(name))return json({error:'Unknown volume'},404);const r=await privateObject(this.permanent,`exports/${e.id}/${name}`,request,name);r.headers.set('Content-Disposition',`attachment; filename="${name}"`);return r;}return json(e);}
     if(p==='/internal/tick'&&method==='POST') {
       // Initial bulk import finishes before the first owner-triggered generation activates the clock.
+      await queuePreparation(this);
       if(!await this.store.get('activated'))return json({ok:true,waiting:'Complete the initial import and generate once to activate daily publication.'});
       const cfg=await this.config(),input=await body();const now=new Date(input.now||Date.now());let errors=[];
       for(const todo of plan(now,cfg,await this.store.get('current'),await this.store.get('ended')))try{await this.ensure(todo.day,todo.publish);}catch(e){errors.push(e.message);}
@@ -306,9 +312,9 @@ export class Coordinator {
     if((match=p.match(/^\/internal\/sources\/([0-9a-f]{64})$/))) {
       const s=await this.store.get('source:'+match[1]);if(!s)return json({error:'Unknown source'},404);
       if(['GET','HEAD'].includes(method))return privateObject(this.sources,s.object_key,request,s.name);
-      if(method==='PUT'){const b=await body();await this.atomic(async()=>{const latest=await this.store.get('source:'+s.hash);latest.status=b.ok?'ready':'invalid';latest.clips=b.clips||0;await this.store.put('source:'+s.hash,latest);});return json({ok:true});}
+      if(method==='PUT'){const b=await body();await this.atomic(async()=>{const latest=await this.store.get('source:'+s.hash);latest.status=b.ok?'ready':'invalid';latest.clips=b.clips||0;if(b.preparation){latest.preparation=b.preparation;latest.preparation_settings=b.import_settings;}await this.store.put('source:'+s.hash,latest);});return json({ok:true});}
     }
-    if((match=p.match(/^\/internal\/cache\/([0-9a-f]{64})\/(manifest\.json|[0-9a-f]{64}\.wav)$/))) {
+    if((match=p.match(/^\/internal\/cache\/([0-9a-f]{64})\/(manifest\.json|prepared\.wav|[0-9a-f]{64}\.wav)$/))) {
       const key=`derived/${match[1]}/${match[2]}`;
       if(method==='PUT'){
         const data=await request.arrayBuffer(),digest=await hash(data),prior=match[2].endsWith('.wav')&&await this.sources.head(key);

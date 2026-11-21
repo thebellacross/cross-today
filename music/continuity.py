@@ -10,7 +10,8 @@ from .common import digest
 VERSION = 'activity-1'
 FEATURES = ['interior_gap_fraction', 'long_gap_rate', 'longest_gap_fraction',
             'source_gap_fraction', 'gated_gap_fraction', 'declared_rest_fraction']
-DEFAULTS = {'mode': 'propose', 'min_gap_seconds': .8, 'max_additions': 3}
+DEFAULTS = {'mode': 'propose', 'min_gap_seconds': .8, 'max_additions': 3, 'max_connections': 3}
+CONNECTION_ACTIONS = ('phrase-connect','bridge-gap','sustain-gap','handoff-gap')
 
 
 def activity(audio, rate, hop_seconds=.02):
@@ -39,7 +40,7 @@ def intersects(spans, a, b):
 
 def declared_rests(plan):
     return plan.get('rests', [{'start':s['start'], 'end':s['start']+s['transition']['seconds'], 'reason':'legacy planned drop'}
-                              for s in plan['sections'] if s['transition']['kind']=='drop'])
+                              for s in plan.get('sections',[]) if s['transition']['kind']=='drop'])
 
 
 def diagnose(audio, rate, plan, events):
@@ -91,7 +92,20 @@ def phrase_schedule(clip, measured, frames, rng, rate, max_piece_seconds=2.):
     return pieces
 
 
-def change(parent, action, target, seed, snapshot, evidence, locks, rules=None):
+def neighbours(plan, evidence, gap):
+    """Use actual audible boundaries, including the existing effect tails."""
+    before=[];after=[];by_id={e['event_id']:e for e in plan['events']}
+    for row in evidence['events']:
+        for a,b in row.get('activity',{}).get('spans',[]):
+            a+=row['start'];b+=row['start']
+            if b<=gap['start']+.12:before.append((b,row['event_id']))
+            if a>=gap['end']-.12:after.append((a,row['event_id']))
+    left=by_id[max(before)[1]] if before else None
+    right=by_id[min(after)[1]] if after else None
+    return left,right
+
+
+def change(parent, action, target, seed, snapshot, evidence, locks, rules=None, targets=None, scope=None):
     from .plan import rng_for, finish_mutation
     if not evidence or evidence.get('continuity', {}).get('version') != VERSION:
         raise ValueError('Render the parent before proposing a measured phrase connection.')
@@ -146,5 +160,51 @@ def change(parent, action, target, seed, snapshot, evidence, locks, rules=None):
             except ValueError: continue
             p['events'].append(new); changed.append(new['event_id'])
         if not changed: raise ValueError('No measured, unlocked gap accepts a short response.')
+    elif action in ('sustain-gap','handoff-gap'):
+        options={**DEFAULTS,**(rules or {}).get('continuity',{})}
+        eligible=[g for g in evidence['continuity']['gaps'] if not g['declared'] and g['cause']!='quiet-continuation-or-mix' and max(.8,options['min_gap_seconds'])<=g['seconds']<=12]
+        count=0
+        for gap in sorted(eligible,key=lambda g:(-g['seconds'],g['start'])):
+            if count>=options['max_connections']:break
+            left,right=neighbours(parent,evidence,gap)
+            if left is None or (action=='handoff-gap' and right is None):continue
+            if targets is not None and not set(targets)&{a['event_id'] for a in (left,right) if a}:continue
+            if scope and scope.get('kind') in ('range','section'):
+                # Only connect complete gaps inside the requested interval. The
+                # short boundary overlap and effect tails remain in the audit.
+                if gap['start']<scope.get('start',0) or gap['end']>scope.get('end',p['duration']):continue
+            if any(a['event_id'] in p['locks'].get('events',[]) for a in (left,right) if a):continue
+            start=max(0.,gap['start']-.04);end=min(p['duration'],gap['end']+.06);mid=(start+end)/2
+            # One continuation spans the gap; a handoff uses both neighbouring
+            # materials with a short overlap. Existing voices are never moved.
+            overlap=min(.3,(end-start)/6)
+            slots=[(left,start,end)] if action=='sustain-gap' else [(left,start,mid+overlap/2),(right,mid-overlap/2,end)]
+            additions=[]
+            for side,(anchor,a,b) in enumerate(slots):
+                material=clips[anchor['source_id']];analysis=evidence['material_activity'].get(anchor['source_id'])
+                if not analysis:break
+                new=copy.deepcopy(anchor);duration=round(b-a,6)
+                if duration<=0:break
+                key={'parent':parent['plan_id'],'seed':str(seed),'gap':[gap['start'],gap['end']],'side':side,'action':action}
+                new['event_id']='connection-'+digest(key)[:16]
+                new.update(start=round(a,6),duration=duration,role='countervoice',action='continue' if side==0 else 'respond',relation_to=anchor['event_id'],
+                           envelope={'attack':min(.08,duration/5) if side==0 else overlap,'release':overlap if side==0 and len(slots)>1 else min(.1,duration/5),'shape':'sin2'})
+                new['section_id']=next((s['section_id'] for s in p['sections'] if s['start']<=a<s['end']),anchor['section_id'])
+                new['space'].update(tail_seconds=min(.2,anchor['space']['tail_seconds']),decay_seconds=min(.2,anchor['space']['decay_seconds']))
+                # The excerpt stream is named by gap and neighbouring material,
+                # independently of other events and the chosen linking action.
+                stream=rng_for(seed,'connection-excerpts',gap['start'],gap['end'],anchor['event_id'],side)
+                try:pieces=phrase_schedule(material,analysis,round(duration*sr),stream,sr,max_piece_seconds=4.5)
+                except ValueError:break
+                new['transform'].update(technique='phrase',speed=1.,phase_creep=0.,wet=0.,phrases=pieces,offset_frame=pieces[0]['source_start_frame'])
+                new['decision']={'origin':'measured neighbouring-material connection','strategy':action,'gap':gap,'neighbours':[v['event_id'] for v in (left,right) if v],
+                                 'source_analysis':VERSION,'retained':'original stems, source hashes, operation parameters and spatial positions','replaced':'primary read/resynthesis path becomes recorded phrase excerpts'}
+                additions.append(new)
+            if len(additions)!=len(slots):continue
+            trial=copy.deepcopy(p);trial['events'].extend(additions);ids=[a['event_id'] for a in additions]
+            try:finish(trial,changed+ids)
+            except ValueError:continue
+            p['events'].extend(additions);changed.extend(ids);count+=1
+        if not changed:raise ValueError('No unlocked measured gap has a suitable audible neighbour.')
     else: raise ValueError('Unknown continuity action.')
     return finish(p, changed)

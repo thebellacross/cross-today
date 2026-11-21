@@ -12,7 +12,7 @@ from music.preference import vector,train,rank,select,FEATURES,proposals
 @pytest.fixture
 def materials(tmp_path):
     sr=8000;t=np.arange(sr*3)/sr;audio=np.column_stack((np.sin(t*412)*.16,np.sin(t*927)*.11));source=tmp_path/'stereo.wav';write_wav(source,(audio*32767).astype('<i2'),sr)
-    settings={**config()['import'],'sample_rate':sr};cache=tmp_path/'cache';m=import_one(source,cache,settings);snapshot={'clips':m['clips'],'import':settings};snapshot['id']=digest(snapshot)
+    settings={**{k:v for k,v in config()['import'].items() if k!='preparation'},'sample_rate':sr};cache=tmp_path/'cache';m=import_one(source,cache,settings);snapshot={'clips':m['clips'],'import':settings};snapshot['id']=digest(snapshot)
     g={**config()['generation'],'sample_rate':sr,'form':'fusion','controls':{**{k:0. for k in CONTROL_DEFAULTS},'stereo_width':1.}}
     return snapshot,cache,g,source
 

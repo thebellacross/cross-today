@@ -36,6 +36,17 @@ def generate(snapshot,cache,seed,seconds,settings,model=None,profile=None):
     row['report']['model']={'id':model['id'] if model else None,'profile_id':profile.get('id'),'profile_revision':profile.get('revision',0)}
     return row['audio'],row['report']
 
+def audition_end(rows,rate):
+    """Remove only shared digital-zero file padding, never internal rests/tails."""
+    length=max(len(row['audio']) for row in rows);last=0
+    for row in rows:
+        nonzero=np.flatnonzero(np.any(row['audio']!=0,axis=1))
+        if len(nonzero):last=max(last,int(nonzero[-1])+1)
+        from .continuity import declared_rests
+        last=max(last,max([round(r['end']*rate) for r in declared_rests(row['plan'])] or [0]))
+    end=min(length,last+round(.5*rate))
+    return end if last and length-end>=2*rate else length
+
 def experiment(snapshot,cache,folder,request,settings,model=None,parent=None):
     folder=Path(folder);folder.mkdir(parents=True,exist_ok=True);seed=int(request['seed']);profile=request['profile'];g=copy.deepcopy(settings['generation']);g.setdefault('controls',{}).update(profile.get('rules',{}).get('controls',{}));g['max_events']=profile.get('rules',{}).get('max_events',100)
     g['engine_ref']=settings['engine_ref'];g['model_version']={'id':model['id'] if model else None,'profile_id':profile['id'],'profile_revision':profile.get('revision',0)}
@@ -48,7 +59,7 @@ def experiment(snapshot,cache,folder,request,settings,model=None,parent=None):
     parent['output_sample_rate']=request.get('wave_rate',parent.get('output_sample_rate',48000));parent['locks']=request.get('locks',parent['locks']);parent.pop('plan_id',None);parent['plan_id']=digest(parent)
     actions=request.get('actions') or None
     frozen=evaluate([parent],snapshot,cache)[0]
-    plans=proposals(parent,snapshot,seed,locks=parent['locks'],actions=actions,limit=3,rules=profile.get('rules',{}),targets=request.get('targets'),evidence=frozen['report'])
+    plans=proposals(parent,snapshot,seed,locks=parent['locks'],actions=actions,limit=3,rules=profile.get('rules',{}),targets=request.get('targets'),evidence=frozen['report'],scope=request.get('scope'))
     if len(plans)<2:raise ValueError('No allowed variation remains. Change a decision or the explicit locks.')
     evaluated=[frozen]+evaluate(plans[1:],snapshot,cache);rows=[];heard=set()
     for row in evaluated:
@@ -69,6 +80,7 @@ def experiment(snapshot,cache,folder,request,settings,model=None,parent=None):
         row['report']['lock_verification']={'events':locks.get('events',[]),'regions':locks.get('regions',[]),'unmodified_stems':unmodified,'passed':True,'domain':'raw pre-audition-normalization audio'}
     for row in rows:row['features']=scoped_vector(row['plan'],row['report'],request.get('scope'))
     chosen,decision=select(rows,model,seed)
+    playback_end=audition_end(rows,parent['sample_rate'])
     # A static gain per version controls overall level, with one shared peak-safe ceiling.
     # It never compresses within-version dynamics. These audition gains are explicit.
     rms=[float(np.sqrt(np.mean(r['audio']**2))) for r in rows];target=min([v for v in rms if v>1e-9] or [.01]);gains=[min(4,target/max(v,1e-9)) for v in rms]
@@ -77,7 +89,7 @@ def experiment(snapshot,cache,folder,request,settings,model=None,parent=None):
     save_json(folder/'snapshot.json',snapshot)
     for i,(row,gain) in enumerate(zip(rows,gains)):
         p=row['plan'];prefix=f'c{i}';audio=row['audio'];report=row['report'];report['replay']={'engine_ref':settings['engine_ref'],'code_hash':digest({f.name:file_hash(f) for f in sorted((ROOT/'music').glob('*.py'))}),'model_id':model['id'] if model else None,'config':g,'runtime':{'numpy':np.__version__,'python':__import__('platform').python_version()}}
-        save_json(folder/(prefix+'-plan.json'),p);encode(audio,p['sample_rate'],folder/(prefix+'.wav'),True,p['output_sample_rate']);encode(audio*gain,p['sample_rate'],folder/(prefix+'.mp3'))
+        save_json(folder/(prefix+'-plan.json'),p);encode(audio,p['sample_rate'],folder/(prefix+'.wav'),True,p['output_sample_rate']);encode(audio[:playback_end]*gain,p['sample_rate'],folder/(prefix+'.mp3'))
         stem_map={}
         for j,e in enumerate(p['events']):
             names={}
@@ -87,9 +99,10 @@ def experiment(snapshot,cache,folder,request,settings,model=None,parent=None):
                 else:stem_files[checksum]=name
                 names[mode]=name
             stem_map[e['event_id']]=names
-        report.update(stems=stem_map,audition_gain=gain,audition_method='static broadband RMS match with shared peak ceiling; no compression; raw WAV retained',model=decision,source_snapshot=snapshot['id'])
+        audition={'range':[0,playback_end/p['sample_rate']],'padding_removed':max(0,(len(audio)-playback_end)/p['sample_rate']),'method':'one shared endpoint for every candidate; only exact zero suffix, 0.5 s retained; declared rests and nonzero tails protected; raw WAV unchanged'}
+        report.update(stems=stem_map,audition_gain=gain,audition=audition,audition_method='static broadband RMS match with shared peak ceiling; no compression; raw WAV retained',model=decision,source_snapshot=snapshot['id'])
         save_json(folder/(prefix+'-report.json'),report)
-        candidates.append({'id':row['id'],'family_id':p['family_id'],'parent_id':p.get('parent_id'),'prefix':prefix,'features':row['features'],'audio_hash':file_hash(folder/(prefix+'.wav')),'audition_hash':file_hash(folder/(prefix+'.mp3')),'snapshot':snapshot['id'],'duration':len(audio)/p['sample_rate'],'changes':p['decision_log'][-1] if p.get('parent_id') else {'origin':'frozen parent'},'audition_gain':gain})
+        candidates.append({'id':row['id'],'family_id':p['family_id'],'parent_id':p.get('parent_id'),'prefix':prefix,'features':row['features'],'audio_hash':file_hash(folder/(prefix+'.wav')),'audition_hash':file_hash(folder/(prefix+'.mp3')),'snapshot':snapshot['id'],'duration':len(audio)/p['sample_rate'],'changes':p['decision_log'][-1] if p.get('parent_id') else {'origin':'frozen parent'},'audition_gain':gain,'audition':audition})
     result={'runtime':{'python':__import__('platform').python_version(),'platform':__import__('platform').platform(),'numpy':np.__version__},'source_hashes':sorted(set(c['source_hash'] for c in snapshot['clips'])),'candidates':candidates,'decision':decision,'suggested':chosen,'snapshot':snapshot['id'],'engine_ref':settings['engine_ref'],'files':{p.name:{'sha256':file_hash(p),'bytes':p.stat().st_size} for p in folder.iterdir() if p.is_file()}}
     save_json(folder/'result.json',result);return result
 
@@ -98,7 +111,12 @@ def cloud_task(cloud,task_id):
     if task.get('done'):return
     folder=ROOT/'output'/'studio'/task_id;folder.mkdir(parents=True,exist_ok=True)
     try:
-        if task['kind']=='train':
+        if task['kind']=='prepare':
+            snapshot=cloud.material_snapshot(task,ROOT/'.cache/audio');save_json(folder/'snapshot.json',snapshot)
+            cloud.private_put(f'lab/{task_id}/snapshot.json',folder/'snapshot.json')
+            result={'prepared_sources':len(task['sources']),'snapshot':snapshot['id'],'engine_ref':task['config']['engine_ref'],
+                    'files':{'snapshot.json':{'sha256':file_hash(folder/'snapshot.json'),'bytes':(folder/'snapshot.json').stat().st_size}}}
+        elif task['kind']=='train':
             records=task['feedback'];loaded={}
             for f in records:
                 if f.get('revoked') or f['choice'] not in ('A','B'):continue

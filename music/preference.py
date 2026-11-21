@@ -7,7 +7,8 @@ from .frequency import EXTRA_FEATURES,ANALYSIS_VERSION,pair_descriptors
 
 from .continuity import FEATURES as CONTINUITY_FEATURES,VERSION as ACTIVITY_VERSION,descriptors as continuity_descriptors
 
-VERSION='relational-bt-3'
+VERSION='relational-bt-4'
+STRENGTH_WEIGHTS={'normal':1.,'slight':.5}
 LEGACY_FEATURES=['density','rest','entry_spacing','return_spacing','development','duration_spread','foreground_share','role_contrast','band_overlap','pan_separation','tail_occupancy','processing','bit_damage','loop_share','stereo','motion','foreground_noise','conflict_foreground','dense_transients','return_contrast','space_with_overlap','change_with_noise']
 FREQUENCY_FEATURES=LEGACY_FEATURES+EXTRA_FEATURES
 FEATURES=FREQUENCY_FEATURES+CONTINUITY_FEATURES
@@ -15,7 +16,7 @@ FEATURE_COUNTS=(len(LEGACY_FEATURES),len(FREQUENCY_FEATURES),len(FEATURES))
 
 def available_features(report):
     return len(FEATURES) if report.get("continuity",{}).get("version")==ACTIVITY_VERSION else len(FREQUENCY_FEATURES) if report.get("relation_analysis")==ANALYSIS_VERSION else len(LEGACY_FEATURES)
-ACTIONS=['delay-entry','earlier-entry','continue','withdraw','depth','space','processing','replace-material','repeat','return-later','swap-sections','frequency-shift','spectral-space','phrase-connect','bridge-gap']
+ACTIONS=['delay-entry','earlier-entry','continue','withdraw','depth','space','processing','replace-material','repeat','return-later','swap-sections','frequency-shift','spectral-space','phrase-connect','bridge-gap','sustain-gap','handoff-gap']
 
 def vector(plan,report):
     events=report['events'];duration=plan['duration'];n=max(1,len(events));pe={e['event_id']:e for e in plan['events']};features={e['event_id']:e['processed_features'] for e in events}
@@ -64,12 +65,14 @@ def padded(values):
     if not np.isfinite(out).all():raise ValueError('Non-finite relation features.')
     return out
 
-def fit(x,y,regularization=1.):
+def fit(x,y,regularization=1.,sample_weight=None):
     x=np.asarray(x,float);y=np.asarray(y,float);w=np.zeros(len(FEATURES))
     if not len(x):return w
+    sw=np.ones(len(x)) if sample_weight is None else np.asarray(sample_weight,float)
+    if sw.shape!=(len(x),) or not np.isfinite(sw).all() or np.any(sw<=0):raise ValueError('Invalid explicit preference strength.')
     for _ in range(60):
-        logits=np.clip(x@w,-30,30);p=1/(1+np.exp(-logits));gradient=x.T@(p-y)+regularization*w
-        hessian=(x.T*(p*(1-p)))@x+regularization*np.eye(len(w));step=np.linalg.solve(hessian,gradient);w-=step
+        logits=np.clip(x@w,-30,30);p=1/(1+np.exp(-logits));gradient=x.T@(sw*(p-y))+regularization*w
+        hessian=(x.T*(sw*p*(1-p)))@x+regularization*np.eye(len(w));step=np.linalg.solve(hessian,gradient);w-=step
         if np.linalg.norm(step)<1e-8:break
     return w
 
@@ -79,26 +82,28 @@ def train(records,profile,revision,allow_simulated=False):
         if f.get('revoked') or f.get('evaluation') or f.get('choice') not in ('A','B'):continue
         if f.get('origin')!='human' and not allow_simulated:raise ValueError('Non-human labels cannot enter a personal profile.')
         if f['profile_id']!=profile:continue
+        if f.get('strength','normal') not in STRENGTH_WEIGHTS:raise ValueError('Unknown explicit preference strength.')
         valid.append(f)
     differences=[];observed=np.zeros(len(FEATURES),int)
     for f in valid:
         count=min(f.get('available_features_A',len(f['features_A'])),f.get('available_features_B',len(f['features_B'])))
         if count not in FEATURE_COUNTS:raise ValueError('Unknown observed feature schema.')
         delta=padded(f['features_A'])-padded(f['features_B']);delta[count:]=0;observed[:count]+=1;differences.append(delta)
-    x=np.asarray(differences);y=np.array([f['choice']=='A' for f in valid],float)
-    groups=sorted(set(f['family_id'] for f in valid));seed=digest({'revision':revision,'profile':profile,'records':valid});r=rng_for(seed,'bootstrap');weights=fit(x,y);ensemble=[]
+    x=np.asarray(differences);y=np.array([f['choice']=='A' for f in valid],float);weights_by_record=np.array([STRENGTH_WEIGHTS[f.get('strength','normal')] for f in valid])
+    groups=sorted(set(f['family_id'] for f in valid));seed=digest({'revision':revision,'profile':profile,'records':valid});r=rng_for(seed,'bootstrap');weights=fit(x,y,sample_weight=weights_by_record);ensemble=[]
     for _ in range(16):
         draws=r.choice(groups,len(groups),replace=True) if groups else [];indices=[i for group in draws for i,f in enumerate(valid) if f['family_id']==group]
-        ensemble.append(fit(x[indices],y[indices]).tolist() if len(indices) else weights.tolist())
+        ensemble.append(fit(x[indices],y[indices],sample_weight=weights_by_record[indices]).tolist() if len(indices) else weights.tolist())
     evaluation={'method':'parent-family holdout; no near-variant cross split','status':'not enough independent families','families':len(groups),'accuracy':None}
     if len(groups)>=4:
-        test_groups=set(groups[::4]);tr=[i for i,f in enumerate(valid) if f['family_id'] not in test_groups];te=[i for i,f in enumerate(valid) if f['family_id'] in test_groups];frozen=fit(x[tr],y[tr]);evaluation.update(status='technical held-out ranking only; artistic evaluation still requires unseen listening',test_families=sorted(test_groups),accuracy=float(np.mean((x[te]@frozen>0)==y[te])))
+        test_groups=set(groups[::4]);tr=[i for i,f in enumerate(valid) if f['family_id'] not in test_groups];te=[i for i,f in enumerate(valid) if f['family_id'] in test_groups];frozen=fit(x[tr],y[tr],sample_weight=weights_by_record[tr]);evaluation.update(status='technical held-out ranking only; artistic evaluation still requires unseen listening',test_families=sorted(test_groups),accuracy=float(np.mean((x[te]@frozen>0)==y[te])))
     model={'schema':1,'algorithm':VERSION,'feature_names':FEATURES,'profile_id':profile,'dataset_revision':revision,'labels':len(valid),'families':len(groups),'weights':weights.tolist(),'ensemble':ensemble,'regularization':1.,'evaluation':evaluation,'label_origin':'simulated-test-only' if allow_simulated else 'human','uncertainty_method':'parent-family grouped bootstrap; unreliable below three independent families'}
+    model['strength_policy']={'weights':STRENGTH_WEIGHTS,'meaning':'explicit relative preference strength; weights are an engineering convention, not confidence or absolute satisfaction'};model['effective_label_weight']=float(weights_by_record.sum())
     model['observed_feature_counts']=observed.tolist();model['missing_feature_policy']='Old unmeasured descriptors contribute no evidence; their pairwise differences are masked, never fabricated.'
     model['id']=digest(model);return model
 
 def rank(candidates,model,allow_simulated=False):
-    compatible=not model or (model['algorithm']==VERSION and model['feature_names']==FEATURES) or (model['algorithm']=='relational-bt-2' and model['feature_names']==FREQUENCY_FEATURES) or (model['algorithm']=='relational-bt-1' and model['feature_names']==LEGACY_FEATURES)
+    compatible=not model or (model['algorithm'] in (VERSION,'relational-bt-3') and model['feature_names']==FEATURES) or (model['algorithm']=='relational-bt-2' and model['feature_names']==FREQUENCY_FEATURES) or (model['algorithm']=='relational-bt-1' and model['feature_names']==LEGACY_FEATURES)
     if model and (not compatible or (model.get('label_origin')!='human' and not allow_simulated)):raise ValueError('Incompatible or simulated personal model.')
     w=padded(model['weights']) if model else np.zeros(len(FEATURES));result=[];base=padded(candidates[0]['features'])
     for c in candidates:
@@ -124,21 +129,23 @@ def constrain(plan,rules):
         if rules.get('preserve_channels') and (e['channel_mode']!='preserve' or e['space']['width']!=1.):raise ValueError('A channel lock was violated.')
     return plan
 
-def proposals(parent,snapshot,seed,locks=None,actions=None,limit=3,rules=None,targets=None,evidence=None):
+def proposals(parent,snapshot,seed,locks=None,actions=None,limit=3,rules=None,targets=None,evidence=None,scope=None):
     rows=[parent];r=rng_for(seed,'proposal-order')
+    requested_targets=targets
     if actions is None:
         automatic=ACTIONS if parent['controls']['structure_randomness'] else ['processing','space','frequency-shift','spectral-space']
-        if (rules or {}).get('continuity',{}).get('mode')=='off':automatic=[a for a in automatic if a not in ('bridge-gap','phrase-connect')]
+        if (rules or {}).get('continuity',{}).get('mode')=='off':automatic=[a for a in automatic if a not in ('bridge-gap','phrase-connect','sustain-gap','handoff-gap')]
         actions=list(r.permutation(automatic))
         if parent['controls']['structure_randomness'] and (rules or {}).get('continuity',{}).get('mode')=='propose':
-            actions=['bridge-gap','phrase-connect']+[a for a in actions if a not in ('bridge-gap','phrase-connect')]
+            preferred=['handoff-gap','sustain-gap','bridge-gap','phrase-connect'] if evidence and any(g['seconds']>2.4 and not g['declared'] and g['cause']!='quiet-continuation-or-mix' for g in evidence.get('continuity',{}).get('gaps',[])) else ['bridge-gap','phrase-connect']
+            actions=preferred+[a for a in actions if a not in preferred]
     targets=[e['event_id'] for e in parent['events'] if (targets is None or e['event_id'] in targets) and e['event_id'] not in (locks or parent['locks']).get('events',[])]
     for action in actions:
         for target in list(r.permutation(targets)):
             try:
-                if action in ('phrase-connect','bridge-gap'):
+                if action in ('phrase-connect','bridge-gap','sustain-gap','handoff-gap'):
                     from .continuity import change
-                    p=change(parent,action,target,seed,snapshot,evidence,locks,rules)
+                    p=change(parent,action,target,seed,snapshot,evidence,locks,rules,targets=requested_targets,scope=scope)
                 else:p=mutate(parent,action,target,seed,snapshot,locks)
                 p=constrain(p,rules or {})
             except ValueError:continue

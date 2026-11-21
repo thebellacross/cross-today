@@ -20,10 +20,24 @@ export async function dispatchStudio(c,id,manual=false) {
   if(send)try{await c.dispatch('studio',id);}catch{await c.atomic(async()=>{const t=await c.store.get('studio-task:'+id);t.status='failed';t.error='后台未能启动，请重试。';t.lease_until=0;t.retry_after=Date.now()+900000;await c.store.put('studio-task:'+id,t);});}
   return await c.store.get('studio-task:'+id);
 }
+const importSignature=value=>JSON.stringify(value,(_,v)=>v&&typeof v==='object'&&!Array.isArray(v)?Object.fromEntries(Object.entries(v).sort(([a],[b])=>a.localeCompare(b))):v);
+export async function queuePreparation(c) {
+  const task=await c.atomic(async()=>{
+    const cfg=await c.config();if(cfg.import.preparation?.mode!=='remove-digital-silence')return null;
+    const tasks=await c.list('studio-task:');const existing=tasks.find(t=>t.kind==='prepare'&&t.status!=='ready');if(existing)return existing;
+    const sources=(await c.list('source:')).filter(s=>s.enabled&&s.status!=='invalid'&&importSignature(s.preparation_settings)!==importSignature(cfg.import)).slice(0,8);
+    if(!sources.length)return null;
+    const t={id:uuid(),kind:'prepare',profile:await profile(c),config:cfg,model:null,seed:'0',created:Date.now(),status:'queued',attempts:0,lease_until:0,
+      sources:sources.map(({hash,name,tags,extension,bytes})=>({hash,name,tags,extension,bytes})),intent:'素材入库整理：仅处理新增或配置变化的素材，原名称与原位置映射保留'};
+    await c.store.put('studio-task:'+t.id,t);return t;
+  });
+  return task?dispatchStudio(c,task.id):null;
+}
 export async function handleStudio(c,request,{json,privateObject,PublicError}) {
   const url=new URL(request.url),path=url.pathname,method=request.method;if(!path.startsWith('/api/studio/')&&!path.startsWith('/internal/studio/'))return null;
   const fail=(message,status=400)=>{throw new PublicError(message,status);};const read=async()=>{const text=await request.text();if(text.length>200000)fail('请求过大。',413);return JSON.parse(text||'{}');};let m;
   const stateTask=t=>{const {config,sources,model,feedback_refs,...safe}=t;return safe;};
+  if(path==='/api/studio/prepare'&&method==='POST'){const t=await queuePreparation(c);return json(t?stateTask(t):{status:'ready',message:'所有选入素材已经整理完成。'});}
   if((m=path.match(/^\/internal\/studio\/tasks\/([\w-]+)\/daily-score$/))&&['GET','HEAD'].includes(method)){
     // The read-only runner can access only the score pinned to this active task.
     // No client URL, repository, filename or write operation is accepted.
@@ -63,7 +77,7 @@ export async function handleStudio(c,request,{json,privateObject,PublicError}) {
     if(b.restore_revision!==undefined){const old=await c.store.get(`taste-profile-history:${p.id}:${b.restore_revision}`);if(!old)fail('历史档案版本不存在。');const saved=old.active_model&&await c.store.get('taste-model:'+old.active_model);if(saved&&saved.model.dataset_revision!==p.dataset_revision&&!b.confirm_historical)fail('历史档案包含旧反馈模型，请明确确认回退。',409);p.rules=structuredClone(old.rules);p.brief=old.brief||'';p.active_model=old.active_model;}
     if(b.model!==undefined){const model=b.model&&await c.store.get('taste-model:'+b.model);if(b.model&&model?.profile_id!==p.id)fail('模型不属于此档案。');if(model&&model.model.dataset_revision!==p.dataset_revision&&!b.confirm_historical)fail('这是旧反馈版本。请确认回退，或重新训练。',409);p.active_model=b.model||null;}
     if(b.brief!==undefined){if(typeof b.brief!=='string'||b.brief.length>4000)fail('作品方向最多 4000 字符。');p.brief=b.brief;p.brief_is_label=false;}
-    if(b.rules!==undefined){const rules=b.rules;if(!rules||typeof rules!=='object'||Array.isArray(rules))fail('规则格式错误。');const keys=['structure_randomness','processing_intensity','bit_damage','bus_intervention','loop_activity','space_motion','dropout_probability','stereo_width'];if(Object.keys(rules).some(k=>!['controls','preserve_channels','max_events','continuity'].includes(k)))fail('未知规则。');if(rules.controls&&Object.entries(rules.controls).some(([k,v])=>!keys.includes(k)||!Number.isFinite(v)||v<0||v>1))fail('控制值必须在 0–1 之间。');if(rules.max_events!==undefined&&(!Number.isInteger(rules.max_events)||rules.max_events<2||rules.max_events>100))fail('事件上限范围为 2–100。');if(rules.continuity!==undefined){const r=rules.continuity;if(!r||typeof r!=='object'||Array.isArray(r)||Object.keys(r).some(k=>!['mode','min_gap_seconds','max_additions'].includes(k))||!['off','propose'].includes(r.mode)||(r.min_gap_seconds!==undefined&&(!Number.isFinite(r.min_gap_seconds)||r.min_gap_seconds<.3||r.min_gap_seconds>10))||(r.max_additions!==undefined&&(!Number.isInteger(r.max_additions)||r.max_additions<1||r.max_additions>6)))fail('连接规则：mode 为 off 或 propose，断点阈值 0.3–10 秒，最多 1–6 个回应。');}p.rules=rules;}
+    if(b.rules!==undefined){const rules=b.rules;if(!rules||typeof rules!=='object'||Array.isArray(rules))fail('规则格式错误。');const keys=['structure_randomness','processing_intensity','bit_damage','bus_intervention','loop_activity','space_motion','dropout_probability','stereo_width'];if(Object.keys(rules).some(k=>!['controls','preserve_channels','max_events','continuity'].includes(k)))fail('未知规则。');if(rules.controls&&Object.entries(rules.controls).some(([k,v])=>!keys.includes(k)||!Number.isFinite(v)||v<0||v>1))fail('控制值必须在 0–1 之间。');if(rules.max_events!==undefined&&(!Number.isInteger(rules.max_events)||rules.max_events<2||rules.max_events>100))fail('事件上限范围为 2–100。');if(rules.continuity!==undefined){const r=rules.continuity;if(!r||typeof r!=='object'||Array.isArray(r)||Object.keys(r).some(k=>!['mode','min_gap_seconds','max_additions','max_connections'].includes(k))||!['off','propose'].includes(r.mode)||(r.min_gap_seconds!==undefined&&(!Number.isFinite(r.min_gap_seconds)||r.min_gap_seconds<.3||r.min_gap_seconds>10))||(r.max_additions!==undefined&&(!Number.isInteger(r.max_additions)||r.max_additions<1||r.max_additions>6))||(r.max_connections!==undefined&&(!Number.isInteger(r.max_connections)||r.max_connections<1||r.max_connections>6)))fail('连接规则：mode 为 off 或 propose，断点阈值 0.3–10 秒，最多 1–6 个回应。');}p.rules=rules;}
     await c.store.put(`taste-profile-history:${p.id}:${p.revision}`,await profile(c,p.id));p.revision++;await c.store.put('taste-profile:'+p.id,p);
     if(b.daily===true){const cfg=await c.config();cfg.preference_profile=p.id;await c.store.put('config',cfg);await c.store.put('config-revision',(await c.store.get('config-revision')||0)+1);}return json(p);
   });
@@ -73,7 +87,7 @@ export async function handleStudio(c,request,{json,privateObject,PublicError}) {
       let t={id:uuid(),kind:path.endsWith('/train')?'train':'render',evaluation:!!b.evaluation,profile:p,config:cfg,model:p.active_model?(await c.store.get('taste-model:'+p.active_model))?.model:null,seed:String(BigInt('0x'+uuid().replaceAll('-','').slice(0,15))),created:Date.now(),status:'queued',attempts:0,lease_until:0};
       if(t.kind==='train'){const feedback=(await c.list('taste-feedback:')).filter(f=>f.profile_id===p.id&&!f.evaluation);t.feedback_refs=feedback.map(f=>[f.id,f.revision]);t.dataset_revision=p.dataset_revision;}
       else {
-        t.seconds=Number(b.seconds||36);if(t.seconds<8||t.seconds>900)fail('试听作品长度为 8–900 秒。');t.actions=b.actions||null;if(t.actions&&(!Array.isArray(t.actions)||t.actions.length>12||t.actions.some(x=>!['delay-entry','earlier-entry','continue','withdraw','depth','space','processing','replace-material','repeat','return-later','swap-sections','frequency-shift','spectral-space','phrase-connect','bridge-gap'].includes(x))))fail('未知变体动作。');
+        t.seconds=Number(b.seconds||36);if(t.seconds<8||t.seconds>900)fail('试听作品长度为 8–900 秒。');t.actions=b.actions||null;if(t.actions&&(!Array.isArray(t.actions)||t.actions.length>12||t.actions.some(x=>!['delay-entry','earlier-entry','continue','withdraw','depth','space','processing','replace-material','repeat','return-later','swap-sections','frequency-shift','spectral-space','phrase-connect','bridge-gap','sustain-gap','handoff-gap'].includes(x))))fail('未知变体动作。');
         t.locks=b.locks||{events:[],regions:[],relations:[]};if(!Array.isArray(t.locks.events)||!Array.isArray(t.locks.regions)||!Array.isArray(t.locks.relations)||JSON.stringify(t.locks).length>12000||t.locks.regions.some(x=>!Array.isArray(x)||x.length!==2||!x.every(Number.isFinite)||x[0]<0||x[1]<=x[0]))fail('锁定范围无效。');
         t.targets=Array.isArray(b.targets)?b.targets.map(String).slice(0,100):null;t.scope=b.scope||{kind:'whole'};t.intent=String(b.intent||'').slice(0,2000);t.intent_is_label=false;
         if(b.parent&&t.evaluation)fail('盲听评估从新的未训练素材开始。');if(b.parent){const parent=await c.store.get('studio-task:'+b.parent.task);const candidate=parent?.result?.candidates?.find(x=>x.id===b.parent.candidate);if(parent?.status!=='ready'||!candidate)fail('父计划尚未就绪。');t.parent={task:parent.id,prefix:candidate.prefix,candidate:candidate.id};if(b.locks===undefined)delete t.locks;}
@@ -95,8 +109,10 @@ export async function handleStudio(c,request,{json,privateObject,PublicError}) {
     const b=await read(),comparison=await c.store.get('taste-comparison:'+(m?m[1]:b.comparison));if(!comparison)fail('比较不存在。');const old=await c.store.get('taste-feedback:'+comparison.id);
     if(method==='POST'&&old)return json(old);if(method==='PUT'&&(!old||b.revision!==old.revision))fail('反馈版本已改变，请刷新。',409);
     if(b.scope){if(!['whole','section','range','event','relationship'].includes(b.scope.kind))fail('反馈范围无效。');if(['event','relationship'].includes(b.scope.kind)&&!b.scope.events?.length)fail('请选择反馈对应的事件。');if(['range','section'].includes(b.scope.kind)&&!(Number.isFinite(b.scope.start)&&Number.isFinite(b.scope.end)&&b.scope.end>b.scope.start&&b.scope.start>=0))fail('反馈时间范围无效。');}if(b.confirmed!==true)fail('需要明确确认这条听后反馈。');if(!['A','B','both','neither','similar','unknown','technical'].includes(b.choice))fail('选择无效。');
+    if(b.strength!==undefined&&!['normal','slight'].includes(b.strength))fail('偏好程度为 normal 或 slight。');
+    const strength=b.strength||old?.strength||'normal';
     const t=await c.store.get('studio-task:'+comparison.task),[a,d]=comparison.order.map(id=>t.result.candidates.find(x=>x.id===id));
-    const f={...comparison,id:comparison.id,origin:'human',scope:b.scope||comparison.scope,choice:b.choice,revoked:!!b.revoked,revision:(old?.revision||0)+1,note:String(b.note||'').slice(0,4000),confirmed:true,features_A:a.features,features_B:d.features,audio_hashes:[a.audio_hash,d.audio_hash],audition_hashes:[a.audition_hash,d.audition_hash],audition_gains:[a.audition_gain,d.audition_gain],source_snapshots:[a.snapshot,d.snapshot],parent_plans:[a.parent_id,d.parent_id],changes:[a.changes,d.changes],engine_ref:t.config.engine_ref,updated:Date.now()};
+    const f={...comparison,id:comparison.id,origin:'human',scope:b.scope||comparison.scope,choice:b.choice,strength:['A','B'].includes(b.choice)?strength:'normal',revoked:!!b.revoked,revision:(old?.revision||0)+1,note:String(b.note||'').slice(0,4000),confirmed:true,features_A:a.features,features_B:d.features,audio_hashes:[a.audio_hash,d.audio_hash],audition_hashes:[a.audition_hash,d.audition_hash],audition_gains:[a.audition_gain,d.audition_gain],auditions:[a.audition||{range:[0,a.duration],padding_removed:0},d.audition||{range:[0,d.duration],padding_removed:0}],source_snapshots:[a.snapshot,d.snapshot],parent_plans:[a.parent_id,d.parent_id],changes:[a.changes,d.changes],engine_ref:t.config.engine_ref,updated:Date.now()};
     const trainingChanged=!f.evaluation&&(['A','B'].includes(f.choice)||['A','B'].includes(old?.choice));
     const p=trainingChanged?await profile(c,f.profile_id):null;
     await c.store.put(`taste-feedback-history:${f.id}:${f.revision}`,f);await c.store.put('taste-feedback:'+f.id,f);await c.store.put('taste-revision',(await c.store.get('taste-revision')||0)+1);
@@ -108,7 +124,7 @@ export async function handleStudio(c,request,{json,privateObject,PublicError}) {
       const t=await c.store.get('studio-task:'+id);if(!t||b.run!==t.run)fail('任务租约不匹配。',409);if(!b.result?.files||!Object.keys(b.result.files).length)fail('资产清单缺失。');if(t.kind==='render'&&b.result.engine_ref!==t.config.engine_ref)fail('生成引擎版本不一致。',409);
       for(const [name,meta]of Object.entries(b.result.files)){if(!/^[a-z0-9.-]+$/.test(name))fail('文件名无效。');const head=await c.permanent.head(`lab/${id}/${name}`);if(!head||head.sha256!==meta.sha256||head.size!==meta.bytes)fail('私有文件校验未完成。',409);}
     }
-    return c.atomic(async()=>{const t=await c.store.get('studio-task:'+id);if(!t)fail('任务不存在。',404);if(action==='claim'){
+    const response=await c.atomic(async()=>{const t=await c.store.get('studio-task:'+id);if(!t)fail('任务不存在。',404);if(action==='claim'){
       if(t.status==='ready')return json({done:true});if(t.status==='rendering'&&t.lease_until>Date.now()&&t.run!==b.run)fail('已有后台任务执行中。',409);t.run=b.run;t.status='rendering';t.lease_until=Date.now()+120*60000;await c.store.put('studio-task:'+id,t);
       if(t.kind==='train')t.feedback=await Promise.all(t.feedback_refs.map(([id,revision])=>c.store.get(`taste-feedback-history:${id}:${revision}`)));return json(t);
     }
@@ -116,6 +132,7 @@ export async function handleStudio(c,request,{json,privateObject,PublicError}) {
     if(action==='failed'){t.status='failed';t.error=b.reason==='Storage temporarily limited'?'免费存储写入额度暂满。已保存文件和原输入保留，后台会在额度恢复后重试，不会购买额外容量。':b.reason==='Cross-runtime replay mismatch'?'父计划跨运行环境重放未通过字节校验，已停止受控比较。请从同一批素材建立新的云端父计划；旧音频仍保留。':b.reason==='No audible sample difference'?'参数改变后音频没有发生有效差异。请选择另一个事件或决定；没有创建偏好标签。':b.reason==='No allowed variation'?'锁定条件阻止了所有变体。请选择未锁定事件，或调整允许变化的范围。':'试听或训练未完成；原计划、反馈与公开专辑未改变。可保留输入重试。';t.retry_after=Date.now()+Math.max(900000,Math.min(7200,Number(b.retry_after)||0)*1000);}
     else {t.status='ready';t.completed=Date.now();t.result=b.result;delete t.error;if(t.kind==='train'){const model=b.result.model;if(model?.label_origin!=='human'||model.profile_id!==t.profile.id||model.dataset_revision!==t.dataset_revision||!Array.isArray(model.weights)||model.weights.some(x=>!Number.isFinite(x)))fail('模型版本或标签来源不一致。');await c.store.put('taste-model:'+model.id,{id:model.id,task:t.id,profile_id:t.profile.id,created:Date.now(),model});}}
     await c.store.put('studio-task:'+id,t);return json({ok:true});});
+    if(action==='ready')await queuePreparation(c);return response;
   }
   return json({error:'Not found'},404);
 }

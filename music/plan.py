@@ -17,8 +17,18 @@ def controls(settings):
     if any(not isinstance(v,(int,float)) or not 0<=v<=1 for v in c.values()):raise ValueError('Controls must be within 0–1.')
     return c
 
-def source_record(c):return {k:c[k] for k in ('id','source_hash','start_frame','end_frame','sample_rate','cache_sha256','name','tags','seconds','channels') if k in c}
+def source_record(c):return {k:c[k] for k in ('id','source_hash','start_frame','end_frame','sample_rate','cache_sha256','name','tags','seconds','channels','preparation','source_mapping') if k in c}
 def source_span(clip,params):
+    if clip.get('source_mapping'):
+        def original_ranges(a,b):
+            return [[m['original_start_frame']+max(a,m['cache_start_frame'])-m['cache_start_frame'],m['original_start_frame']+min(b,m['cache_end_frame'])-m['cache_start_frame']]
+                    for m in clip['source_mapping'] if m['cache_start_frame']<b and m['cache_end_frame']>a]
+        if params['technique']=='phrase':
+            return {'pieces':[{**p,'original_ranges':original_ranges(p['source_start_frame'],p['source_end_frame'])} for p in params['phrases']],
+                    'sampling':'explicit pieces from permanently prepared stereo material; original source locations retained'}
+        loop=params['technique'] in ('loop','hits');a=params['offset_frame'] if loop else 0;b=a+params['period_frames'] if loop else clip['end_frame']-clip['start_frame']
+        return {'cache_start_frame':a,'cache_end_frame':b,'prepared_start_frame':clip['start_frame']+a,'prepared_end_frame':clip['start_frame']+b,
+                'original_ranges':original_ranges(a,b),'initial_offset_frame':params['offset_frame'],'sampling':'prepared material cache; source-file gaps removed once at import, original map retained'}
     if params['technique']=='phrase':
         pieces=[{**p,'absolute_start_frame':clip['start_frame']+p['source_start_frame'],'absolute_end_frame':clip['start_frame']+p['source_end_frame']} for p in params['phrases']]
         return {'pieces':pieces,'sampling':'explicit one-shot stereo excerpts; timing, fades and short rests recorded'}

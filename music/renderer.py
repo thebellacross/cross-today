@@ -131,7 +131,7 @@ def render_plan(plan,snapshot,cache,stems=False):
         if e['source_id'] not in material_activity:
             raw,_=read_clip(Path(cache)/clips[e['source_id']]['cache_file'],native=True);material_activity[e['source_id']]=activity(raw,sr)
         reports.append({'event_id':e['event_id'],'section_id':e['section_id'],'start':e['start'],'duration':e['duration'],'tail_seconds':max(0,size/sr-e['duration']),'active_until':(start+size)/sr,'lane':lane,'role':e['role'],'action':e['action'],'relation_to':e['relation_to'],
-            'name':e['source']['name'],'tags':e['source']['tags'],'source_hash':e['source_hash'],'clip_id':e['source_id'],'segment_start':e['source']['start_frame']/sr,'segment_end':e['source']['end_frame']/sr,'technique':e['transform']['technique'],
+            'name':e['source']['name'],'tags':e['source']['tags'],'source_hash':e['source_hash'],'clip_id':e['source_id'],'segment_start':e['source']['start_frame']/sr,'segment_end':e['source']['end_frame']/sr,'source_preparation':clip.get('preparation'),'source_time_domain':'prepared' if clip.get('preparation') else 'original','technique':e['transform']['technique'],
             'gain':e['gain'],'pan':e['pan'],'source_offset_frame':e['transform']['offset_frame'],'speed':1+e['transform']['phase_creep'] if e['transform']['technique'] in ('loop','hits') else e['transform']['speed'],
             'operations':[o['kind'] for o in e['transform']['operations']],'data_family':'seeded control','channel_policy':SUPPORT[e['transform']['technique']], 'processed_features':summary(measure),'feature_frames':measure,'stem_hash':hashlib_array(y[:size]),'activity':activity(y[:size],sr),'input_activity':activity(render_event(e,clips,cache,sr,'input'),sr)})
     for b in plan['buses']:

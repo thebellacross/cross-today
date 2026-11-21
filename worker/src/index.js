@@ -190,6 +190,10 @@ export class Coordinator {
       if(name.endsWith('.zip')||url.searchParams.get('download')==='1')h.set('Content-Disposition',`attachment; filename="${name}"`);
       return new Response(method==='HEAD'?null:r.body,{status:r.status,headers:h});
     }
+    if(p==='/api/storage-status'&&method==='GET'){
+      const recent=(await this.store.get('github-writes')||[]).filter(t=>t>Date.now()-3600000);
+      return json({backend:this.env.STORAGE_BACKEND||'r2',writes_last_hour:recent.length,write_limit:440,retry_at:recent.length>=440?recent[0]+3600000:null});
+    }
     if(p==='/api/state') {
       const cfg=await this.config();const jobs=(await this.list('job:')).sort((a,b)=>b.day.localeCompare(a.day));
       return json({activated:!!await this.store.get('activated'),config:cfg,config_revision:await this.store.get('config-revision')||0,sources:await this.list('source:'),jobs:jobs.map(({sources,config,...rest})=>rest),current:publicAlbum(await this.store.get('current'),origin),selections:await this.list('selection:'),exports:await this.list('export:'),playlist:await this.store.get('playlist')||{revision:0,order:[],notes:'',title:''},ended:!!await this.store.get('ended'),last_tick:await this.store.get('last-tick')||null});

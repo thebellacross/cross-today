@@ -85,7 +85,7 @@ export async function handleStudio(c,request,{json,privateObject,PublicError}) {
     const b=await read();if(!validId(b.request_id))fail('缺少请求去重标识。');const key='studio-request:'+b.request_id;
     const task=await c.atomic(async()=>{const old=await c.store.get(key);if(old)return c.store.get('studio-task:'+old);const p=await profile(c,b.profile_id||'open');if(!p)fail('档案不存在。');const cfg=await c.config();if(cfg.generation.renderer!=='composition')fail('请先完成引擎升级。',409);
       let t={id:uuid(),kind:path.endsWith('/train')?'train':'render',evaluation:!!b.evaluation,profile:p,config:cfg,model:p.active_model?(await c.store.get('taste-model:'+p.active_model))?.model:null,seed:String(BigInt('0x'+uuid().replaceAll('-','').slice(0,15))),created:Date.now(),status:'queued',attempts:0,lease_until:0};
-      if(t.kind==='train'){const feedback=(await c.list('taste-feedback:')).filter(f=>f.profile_id===p.id&&!f.evaluation);t.feedback_refs=feedback.map(f=>[f.id,f.revision]);t.dataset_revision=p.dataset_revision;}
+      if(t.kind==='train'){const feedback=(await c.list('taste-feedback:')).filter(f=>f.profile_id===p.id&&!f.evaluation);t.feedback_refs=feedback.map(f=>[f.id,f.revision]);t.dataset_revision=p.dataset_revision;if(b.activate_when_ready===true)t.activation_request={profile_revision:p.revision,dataset_revision:p.dataset_revision,requested:Date.now()};}
       else {
         t.seconds=Number(b.seconds||36);if(t.seconds<8||t.seconds>900)fail('试听作品长度为 8–900 秒。');t.actions=b.actions||null;if(t.actions&&(!Array.isArray(t.actions)||t.actions.length>12||t.actions.some(x=>!['delay-entry','earlier-entry','continue','withdraw','depth','space','processing','replace-material','repeat','return-later','swap-sections','frequency-shift','spectral-space','phrase-connect','bridge-gap','sustain-gap','handoff-gap'].includes(x))))fail('未知变体动作。');
         t.locks=b.locks||{events:[],regions:[],relations:[]};if(!Array.isArray(t.locks.events)||!Array.isArray(t.locks.regions)||!Array.isArray(t.locks.relations)||JSON.stringify(t.locks).length>12000||t.locks.regions.some(x=>!Array.isArray(x)||x.length!==2||!x.every(Number.isFinite)||x[0]<0||x[1]<=x[0]))fail('锁定范围无效。');
@@ -97,6 +97,11 @@ export async function handleStudio(c,request,{json,privateObject,PublicError}) {
       await c.store.put('studio-task:'+t.id,t);await c.store.put(key,t.id);return t;});return json(stateTask(await dispatchStudio(c,task.id,true)));
   }
   if((m=path.match(/^\/api\/studio\/tasks\/([\w-]+)\/retry$/))&&method==='POST')return json(stateTask(await dispatchStudio(c,m[1],true)));
+  if((m=path.match(/^\/api\/studio\/tasks\/([\w-]+)\/activate-when-ready$/))&&method==='POST')return c.atomic(async()=>{
+    const b=await read(),t=await c.store.get('studio-task:'+m[1]);if(t?.kind!=='train'||t.status==='ready')fail('请选择尚未完成的训练任务。',409);
+    const p=await profile(c,t.profile.id);if(p.revision!==b.profile_revision||p.dataset_revision!==t.dataset_revision)fail('档案或反馈已变化，请重新训练。',409);
+    t.activation_request={profile_revision:p.revision,dataset_revision:p.dataset_revision,requested:t.activation_request?.requested||Date.now()};await c.store.put('studio-task:'+t.id,t);return json(stateTask(t));
+  });
   if((m=path.match(/^\/api\/studio\/media\/([\w-]+)\/([a-z0-9.-]+)$/))&&['GET','HEAD'].includes(method)){
     const t=await c.store.get('studio-task:'+m[1]);if(t?.status!=='ready'||!t.result?.files?.[m[2]])fail('文件尚未准备好。',404);return privateObject(c.permanent,`lab/${t.id}/${m[2]}`,request,m[2]);
   }
@@ -131,6 +136,10 @@ export async function handleStudio(c,request,{json,privateObject,PublicError}) {
     if(t.run!==b.run)fail('任务租约不匹配。',409);if(t.status==='ready')return json({ok:true});t.lease_until=0;
     if(action==='failed'){t.status='failed';t.error=b.reason==='Storage temporarily limited'?'免费存储写入额度暂满。已保存文件和原输入保留，后台会在额度恢复后重试，不会购买额外容量。':b.reason==='Cross-runtime replay mismatch'?'父计划跨运行环境重放未通过字节校验，已停止受控比较。请从同一批素材建立新的云端父计划；旧音频仍保留。':b.reason==='No audible sample difference'?'参数改变后音频没有发生有效差异。请选择另一个事件或决定；没有创建偏好标签。':b.reason==='No allowed variation'?'锁定条件阻止了所有变体。请选择未锁定事件，或调整允许变化的范围。':'试听或训练未完成；原计划、反馈与公开专辑未改变。可保留输入重试。';t.retry_after=Date.now()+Math.max(900000,Math.min(7200,Number(b.retry_after)||0)*1000);}
     else {t.status='ready';t.completed=Date.now();t.result=b.result;delete t.error;if(t.kind==='train'){const model=b.result.model;if(model?.label_origin!=='human'||model.profile_id!==t.profile.id||model.dataset_revision!==t.dataset_revision||!Array.isArray(model.weights)||model.weights.some(x=>!Number.isFinite(x)))fail('模型版本或标签来源不一致。');await c.store.put('taste-model:'+model.id,{id:model.id,task:t.id,profile_id:t.profile.id,created:Date.now(),model});}}
+    if(action==='ready'&&t.kind==='train'&&t.activation_request){const p=await profile(c,t.profile.id),request=t.activation_request;
+      if(p.revision===request.profile_revision&&p.dataset_revision===request.dataset_revision){await c.store.put(`taste-profile-history:${p.id}:${p.revision}`,p);p.active_model=t.result.model.id;p.revision++;await c.store.put('taste-profile:'+p.id,p);t.activation_status='activated';t.activated_profile_revision=p.revision;}
+      else t.activation_status='stale-profile';
+    }
     await c.store.put('studio-task:'+id,t);return json({ok:true});});
     if(action==='ready')await queuePreparation(c);return response;
   }

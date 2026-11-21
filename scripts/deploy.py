@@ -117,7 +117,7 @@ def main():
     if not tag.returncode and run(['git','diff','--name-only',cfg['engine_ref'],'HEAD','--','music','requirements.txt','.github/workflows/daily.yml','web/assets/artist/bellacross.jpg']).stdout.strip():raise RuntimeError('Rendering inputs changed. Set a new engine_ref before publishing changes.')
     if tag.returncode:run(['git','tag',cfg['engine_ref']])
     helper='!'+shlex.quote(gh)+' auth git-credential'
-    run(['git','-c','credential.helper='+helper,'push','-u','origin','main']);run(['git','-c','credential.helper='+helper,'push','origin',cfg['engine_ref']])
+    run(['git','-c','http.version=HTTP/1.1','-c','credential.helper='+helper,'push','-u','origin','main']);run(['git','-c','http.version=HTTP/1.1','-c','credential.helper='+helper,'push','origin',cfg['engine_ref']])
     # Active SQLite objects can retain their earlier code for up to five minutes.
     # Wait for the additive upgrade endpoint; do not reset active imports to speed deployment up.
     deadline=time.monotonic()+360

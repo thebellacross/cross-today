@@ -19,6 +19,10 @@ def controls(settings):
 
 def source_record(c):return {k:c[k] for k in ('id','source_hash','start_frame','end_frame','sample_rate','cache_sha256','name','tags','seconds','channels','preparation','source_mapping') if k in c}
 def source_span(clip,params):
+    if params.get('read_window'):
+        w=params['read_window'];a=w['start_frame'];b=w['end_frame']
+        mapped=[[m['original_start_frame']+max(a,m['cache_start_frame'])-m['cache_start_frame'],m['original_start_frame']+min(b,m['cache_end_frame'])-m['cache_start_frame']] for m in clip.get('source_mapping',[]) if m['cache_start_frame']<b and m['cache_end_frame']>a]
+        return {'cache_start_frame':a,'cache_end_frame':b,'original_ranges':mapped or [[clip['start_frame']+a,clip['start_frame']+b]],'read_window':copy.deepcopy(w),'sampling':'recorded stereo window; deterministic seam overlap and continuous read position across scenes'}
     if clip.get('source_mapping'):
         def original_ranges(a,b):
             return [[m['original_start_frame']+max(a,m['cache_start_frame'])-m['cache_start_frame'],m['original_start_frame']+min(b,m['cache_end_frame'])-m['cache_start_frame']]
@@ -131,7 +135,9 @@ def plan_composition(snapshot,seed,seconds,settings,context='open',family=None):
        'form':form,'process':process,'controls':c,'sections':sections,'events':events,'buses':buses,'ending':{'kind':str(rng_for(seed,'work','ending').choice(['fade','hard','tape-stop'] if c['bus_intervention'] else ['fade','hard'])) if c['structure_randomness'] else 'fade','seconds':min(3.,seconds/10)},'master_gain':.7,
        'rests':[{'start':s['start'],'end':s['start']+s['transition']['seconds'],'reason':'planned drop transition'} for s in sections if s['transition']['kind']=='drop'],'locks':{'events':[],'regions':[],'relations':[]},'decision_log':[{'choice':'process','value':process,'stream':'work','origin':'unbiased exploration; no personal evidence'}], 'output_sample_rate':settings.get('output_sample_rate',settings['sample_rate'])}
     p['replay']={'engine_ref':settings.get('engine_ref'),'engine_hash':digest({f.name:file_hash(f) for f in sorted((ROOT/'music').glob('*.py'))}),'numpy':np.__version__,'configuration':settings,'model_version':settings.get('model_version')}
-    p['plan_id']=digest(p);return p
+    p['plan_id']=digest(p)
+    from .development import arrange
+    return arrange(p,snapshot,settings)
 
 def affected_bounds(plan,changed):
     rows=[e for e in plan['events'] if e['event_id'] in changed]
@@ -165,7 +171,9 @@ def mutate(parent,action,target,seed,snapshot,locks=None):
         elif action=='continue':e['duration']=min(p['duration']-e['start'],e['duration']*1.5)
         elif action=='withdraw':e['duration']=max(.1,e['duration']*.6)
         elif action=='depth':e['role']='background' if e['role']=='foreground' else 'foreground';e['gain']*=.7 if e['role']=='background' else 1.3;e['space']['wet']=min(.7,e['space']['wet']+.25) if p['controls']['space_motion'] else 0.
-        elif action=='space':e['pan']={'start':-e['pan']['start'],'end':-e['pan']['end']};e['space']['width']=max(0.,1.-e['space']['width'])
+        elif action=='space':
+            e['pan']={'start':-e['pan']['start'],'end':-e['pan']['end']};e['space']['width']=max(0.,1.-e['space']['width'])
+            if e.get('automation'):e['automation']['pan']=[[t,-v] for t,v in e['automation']['pan']]
         elif action=='processing':
             if not p['controls']['processing_intensity']:raise ValueError('Processing is disabled by explicit control.')
             e['transform']['wet']=1.-e['transform']['wet'];e['transform']['technique']='weather' if e['transform']['technique']=='tape' else 'tape'
@@ -177,6 +185,7 @@ def mutate(parent,action,target,seed,snapshot,locks=None):
             direction=float(r.choice([-1,1]));e['space']['spectral']={'kind':'spectral-space','crossovers_hz':[350.,1800.],'band_pans':[-.85*direction,0.,.85*direction],'wet':1.,'pad_seconds':.25,'operation_seed':str(seed_for(seed,target,action)),'algorithm':'spectral-balance-1','tail_policy':'contained in current dry/convolution span before spatial delay'}
         elif action=='replace-material':
             clip=snapshot['clips'][int(r.integers(len(snapshot['clips'])))];e['source_id']=clip['id'];e['source_hash']=clip['source_hash'];e['source']=source_record(clip);length=clip['end_frame']-clip['start_frame'];e['transform']['period_frames']=min(length,e['transform']['period_frames']);e['transform']['offset_frame']=min(e['transform']['offset_frame']%length,length-e['transform']['period_frames']);e['source_range']={'cache_start_frame':e['transform']['offset_frame'],'cache_end_frame':length,'absolute_start_frame':clip['start_frame']+e['transform']['offset_frame'],'sampling':'periodic read'}
+            if e['transform'].get('read_window'):e['transform']['read_window'].update(start_frame=0,end_frame=length,crossfade_frames=min(length//8,e['transform']['read_window']['crossfade_frames']))
         elif action=='return-later':
             returns=[a for a in p['events'] if a.get('relation_to')==target]
             if not returns:raise ValueError('No return refers to this event; choose an event with a response or return.')

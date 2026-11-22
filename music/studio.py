@@ -24,6 +24,7 @@ def evaluate(plans,snapshot,cache):
 
 def generate(snapshot,cache,seed,seconds,settings,model=None,profile=None):
     profile=profile or {};settings=copy.deepcopy(settings);settings.setdefault('controls',{}).update(profile.get('rules',{}).get('controls',{}));settings['max_events']=profile.get('rules',{}).get('max_events',100)
+    settings['development']=copy.deepcopy(profile.get('rules',{}).get('development',{'mode':'off'}))
     settings['model_version']={'id':model['id'] if model else None,'profile_id':profile.get('id'),'profile_revision':profile.get('revision',0)}
     base=plan_composition(snapshot,seed,seconds,settings,context=profile.get('id','open'))
     from .preference import constrain
@@ -49,6 +50,7 @@ def audition_end(rows,rate):
 
 def experiment(snapshot,cache,folder,request,settings,model=None,parent=None):
     folder=Path(folder);folder.mkdir(parents=True,exist_ok=True);seed=int(request['seed']);profile=request['profile'];g=copy.deepcopy(settings['generation']);g.setdefault('controls',{}).update(profile.get('rules',{}).get('controls',{}));g['max_events']=profile.get('rules',{}).get('max_events',100)
+    g['development']=copy.deepcopy(profile.get('rules',{}).get('development',{'mode':'off'}))
     g['engine_ref']=settings['engine_ref'];g['model_version']={'id':model['id'] if model else None,'profile_id':profile['id'],'profile_revision':profile.get('revision',0)}
     parent=parent or plan_composition(snapshot,seed,request.get('seconds',36),g,context=profile['id'])
     parent=copy.deepcopy(parent);origin_id=parent.get('plan_id');parent.setdefault('origin_replay',copy.deepcopy(parent.get('replay')))

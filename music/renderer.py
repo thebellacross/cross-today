@@ -10,6 +10,7 @@ from .features import frames,summary
 from .plan import rng_for
 from .frequency import process as frequency_process,ANALYSIS_VERSION,OPERATION_SUPPORT
 from .continuity import activity,diagnose
+from .development import curve,colour,describe
 
 SUPPORT={'tape':'stereo read positions preserved','reverse':'both channels reversed together','varispeed':'shared stereo read trajectory','playhead':'shared stereo read trajectory',
  'loop':'same recorded loop boundaries for both channels','hits':'same pulse mask for both channels','room':'stereo input convolved with explicitly downmixed recorded impulse',
@@ -17,6 +18,15 @@ SUPPORT={'tape':'stereo read positions preserved','reverse':'both channels rever
 
 def stereo(x):return np.column_stack((x,x)) if x.ndim==1 else x.copy()
 def read_at(x,positions):return np.column_stack([np.interp(positions%len(x),np.arange(len(x)),x[:,c]) for c in range(2)])
+def read_window(x,positions,window):
+    a,b=window['start_frame'],window['end_frame'];fade=window['crossfade_frames']
+    if not 0<=a<b<=len(x) or not 0<=fade<=(b-a)//2:raise ValueError('Invalid persistent source window.')
+    fragment=x[a:b]
+    if not window['repeat']:
+        y=np.zeros((len(positions),2));valid=(positions>=0)&(positions<len(fragment));y[valid]=read_at(fragment,positions[valid]);return y
+    if fade:
+        w=np.linspace(0,1,fade)[:,None];fragment=fragment[fade:].copy();fragment[-fade:]=x[b-fade:b]*(1-w)+x[a:a+fade]*w
+    return read_at(fragment,positions)
 def convolve(x,ir):
     n=len(x)+len(ir)-1;size=1<<(n-1).bit_length()
     return np.column_stack([np.fft.irfft(np.fft.rfft(x[:,c],size)*np.fft.rfft(ir,size),size)[:n] for c in range(2)])
@@ -53,14 +63,14 @@ def render_event(e,clips,cache,sr,processed=True):
     if e['channel_mode']=='mono':x[:]=x.mean(axis=1)[:,None]
     elif e['channel_mode']!='preserve':raise ValueError('Unknown channel path.')
     p=e['transform'];n=max(1,round(e['duration']*sr));tech=p['technique'];start=p['offset_frame'];positions=start+np.arange(n)*p['speed']
-    if not processed and tech!='phrase':return read_at(x,start+np.arange(n))
+    if not processed and tech!='phrase' and not p.get('read_window'):return read_at(x,start+np.arange(n))
     control=None
     if tech in ('varispeed','playhead','mosaic','spectral','cross','freeze','weather','data'):
         control,_=signal(rng_for(p['control_seed']),n)
     if tech=='reverse':positions=start-np.arange(n)*p['speed']
     if tech=='varispeed':positions=start+np.cumsum(p['speed']*2**(control*.6))
     if tech=='playhead':positions=(control+1)*.5*(len(x)-1)
-    dry=read_at(x,positions);y=dry.copy();input_audio=dry
+    dry=read_window(x,positions,p['read_window']) if p.get('read_window') else read_at(x,positions);y=dry.copy();input_audio=dry
     if tech=='phrase':
         y=np.zeros((n,2))
         for piece in p['phrases']:
@@ -75,7 +85,7 @@ def render_event(e,clips,cache,sr,processed=True):
     elif tech in ('loop','hits'):
         period=p['period_frames'];fragment=x[start:start+period]
         if len(fragment)!=period:raise ValueError('Recorded loop range exceeds cached source.')
-        y=read_at(fragment,np.arange(n)*(1+p['phase_creep']));input_audio=y.copy()
+        y=read_window(x,np.arange(n)*(1+p['phase_creep']),p['read_window']) if p.get('read_window') else read_at(fragment,np.arange(n)*(1+p['phase_creep']));input_audio=y.copy()
         if tech=='hits':y*=np.array(p['hits_mask'])[(np.arange(n)//period)%len(p['hits_mask'])][:,None]
     elif tech in ('spectral','cross','freeze','weather'):
         wet=np.column_stack([spectral(dry[:,i],control,tech,rng_for(p['spectral_seed']),sr) for i in range(2)]);y=(1-p['wet'])*dry+p['wet']*wet
@@ -88,9 +98,12 @@ def render_event(e,clips,cache,sr,processed=True):
         v,_=signal(rng_for(p['control_seed']),n,kind='files',feed=np.clip(x*32767,-32768,32767).astype('<i2').tobytes());y=(1-p['wet'])*dry+p['wet']*stereo(v)*max(.01,float(np.sqrt(np.mean(x*x))))
     if processed=='input' or not processed:return input_audio
     for op in p['operations']:y=frequency_process(y,op,sr) if op['kind'] in OPERATION_SUPPORT else operation(y,op)
+    automation=e.get('automation')
+    if automation:y=colour(y,sr,automation)
     attack=min(len(y)//2,round(e['envelope']['attack']*sr));release=min(len(y)//2,round(e['envelope']['release']*sr))
     if attack:y[:attack]*=np.sin(np.linspace(0,np.pi/2,attack))[:,None]**2
     if release:y[-release:]*=np.sin(np.linspace(np.pi/2,0,release))[:,None]**2
+    if automation:y*=curve(automation['level'],np.arange(len(y))/max(1,n-1))[:,None]
     if processed=='dry':return y*e['gain']
     if tech=='room':
         irclip=clips[p['ir_clip_id']];impulse,irrate=read_clip(Path(cache)/irclip['cache_file'],native=True)
@@ -100,15 +113,17 @@ def render_event(e,clips,cache,sr,processed=True):
         wet=convolve(y,impulse);y=np.pad(y,((0,len(wet)-len(y)),(0,0)))*(1-p['wet'])+wet*p['wet']
     if e['space'].get('spectral'):y=frequency_process(y,e['space']['spectral'],sr)
     mid=y.mean(axis=1);side=(y[:,0]-y[:,1])*.5*e['space']['width'];y=np.column_stack((mid+side,mid-side))
-    pan=np.linspace(e['pan']['start'],e['pan']['end'],len(y));y[:,0]*=np.sqrt(1-np.maximum(0,pan));y[:,1]*=np.sqrt(1+np.minimum(0,pan))
+    pan=curve(automation['pan'],np.arange(len(y))/max(1,n-1)) if automation else np.linspace(e['pan']['start'],e['pan']['end'],len(y));y[:,0]*=np.sqrt(1-np.maximum(0,pan));y[:,1]*=np.sqrt(1+np.minimum(0,pan))
     tail=round(e['space']['tail_seconds']*sr);out=np.pad(y,((0,max(0,n+tail-len(y))),(0,0)))
     delay=max(1,round(e['space']['delay_seconds']*sr));decay=max(.001,e['space']['decay_seconds']);wet=e['space']['wet']
-    if wet and tail:
+    if automation:wet=curve(automation['wet'],np.arange(len(out))/max(1,n-1))[:,None]
+    if np.any(wet) and tail:
         source=y.copy();out*=1-wet
         for tap in range(1,min(32,tail//delay+1)):
             at=tap*delay;length=min(len(source),len(out)-at)
             if length<=0:break
-            out[at:at+length]+=source[:length,::-1 if tap%2 else 1]*wet*np.exp(-3*at/sr/decay)
+            send=wet[:length] if isinstance(wet,np.ndarray) else wet
+            out[at:at+length]+=source[:length,::-1 if tap%2 else 1]*send*np.exp(-3*at/sr/decay)
     return out*e['gain']
 
 def render_plan(plan,snapshot,cache,stems=False):
@@ -132,7 +147,7 @@ def render_plan(plan,snapshot,cache,stems=False):
             raw,_=read_clip(Path(cache)/clips[e['source_id']]['cache_file'],native=True);material_activity[e['source_id']]=activity(raw,sr)
         reports.append({'event_id':e['event_id'],'section_id':e['section_id'],'start':e['start'],'duration':e['duration'],'tail_seconds':max(0,size/sr-e['duration']),'active_until':(start+size)/sr,'lane':lane,'role':e['role'],'action':e['action'],'relation_to':e['relation_to'],
             'name':e['source']['name'],'tags':e['source']['tags'],'source_hash':e['source_hash'],'clip_id':e['source_id'],'segment_start':e['source']['start_frame']/sr,'segment_end':e['source']['end_frame']/sr,'source_preparation':clip.get('preparation'),'source_time_domain':'prepared' if clip.get('preparation') else 'original','technique':e['transform']['technique'],
-            'gain':e['gain'],'pan':e['pan'],'source_offset_frame':e['transform']['offset_frame'],'speed':1+e['transform']['phase_creep'] if e['transform']['technique'] in ('loop','hits') else e['transform']['speed'],
+            'gain':e['gain'],'pan':e['pan'],'automation':e.get('automation'),'motif_id':e.get('motif_id'),'source_offset_frame':e['transform']['offset_frame'],'speed':1+e['transform']['phase_creep'] if e['transform']['technique'] in ('loop','hits') else e['transform']['speed'],
             'operations':[o['kind'] for o in e['transform']['operations']],'data_family':'seeded control','channel_policy':SUPPORT[e['transform']['technique']], 'processed_features':summary(measure),'feature_frames':measure,'stem_hash':hashlib_array(y[:size]),'activity':activity(y[:size],sr),'input_activity':activity(render_event(e,clips,cache,sr,'input'),sr)})
     for b in plan['buses']:
         a=max(0,round(b['start']*sr));z=min(length,round(b['end']*sr));phase=float(rng_for(b['operation_seed']).uniform(0,2*np.pi));gate=(np.sin(np.arange(z-a)/sr*2*np.pi/b['period']+phase)>0).astype(float);mix[a:z]*=(1-b['wet']+b['wet']*gate)[:,None]
@@ -143,6 +158,7 @@ def render_plan(plan,snapshot,cache,stems=False):
     clipped=int(np.sum(np.abs(mix)>1));mix=np.clip(mix,-1,1)
     report={'plan_id':plan['plan_id'],'family_id':plan['family_id'],'form':plan['form'],'process':plan['process'],'lanes':len(reports),'sections':plan['sections'],'events':reports,'bends':plan['buses'],'plan':plan,'duration':length/sr,'clipped_samples':clipped,'mix_features':summary(frames(mix,sr)),'relation_analysis':ANALYSIS_VERSION}
     report['continuity']=diagnose(mix,sr,plan,reports);report['material_activity']=material_activity
+    report['development_analysis']=describe(plan,report)
     return mix,report,saved
 
 def hashlib_array(x):

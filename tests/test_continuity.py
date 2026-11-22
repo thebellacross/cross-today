@@ -146,7 +146,9 @@ def test_explicit_slight_preference_is_weighted_and_old_model_remains_exact():
     with pytest.raises(ValueError):train([{**row,'strength':'very'}],'fixture',3,allow_simulated=True)
     assert train([{**row,'revoked':True}],'fixture',4,allow_simulated=True)['labels']==0
     candidates=[{'id':'a','features':a.tolist()},{'id':'b','features':b.tolist()}]
-    assert rank(candidates,{**normal,'algorithm':'relational-bt-3'},True)==rank(candidates,normal,True)
+    from music.preference import PREVIOUS_FEATURES
+    old={**normal,'algorithm':'relational-bt-3','feature_names':PREVIOUS_FEATURES,'weights':normal['weights'][:36],'ensemble':[w[:36] for w in normal['ensemble']]}
+    assert rank(candidates,old,True)==rank(candidates,normal,True)
 
 def test_audition_only_removes_shared_exact_zero_suffix():
     from music.studio import audition_end

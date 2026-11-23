@@ -226,5 +226,8 @@ def finish_mutation(parent,p,changed,action,snapshot,locked):
     footprint=[min(b[0] for b in bounds),max(b[1] for b in bounds)] if bounds else [0,p['duration']]
     for a,b in locked.get('regions',[]):
         if footprint[0]<b and footprint[1]>a:raise ValueError('The effect tail or bus dependency reaches a locked audio region.')
+    if p.get('development'):
+        from .development import refresh_focus
+        refresh_focus(p)
     p['parent_id']=parent['plan_id'];p['decision_log']=parent['decision_log']+[{'origin':'controlled mutation','action':action,'changed_events':changed,'changes':changes,'affected_range':footprint,'tail_and_bus_closure':True}]
     p.pop('plan_id',None);p['plan_id']=digest(p);return p

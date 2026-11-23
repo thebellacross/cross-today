@@ -33,6 +33,14 @@ def measured(clip, key):
     return float(np.median(values)) if values else (clip.get('features', [.03])[0] if key == 'rms' else .2)
 
 
+def refresh_focus(plan):
+    """Update planned scene focus after changing the audible level trajectories."""
+    for section in plan['sections']:
+        t = (section['start'] + section['end']) / 2
+        active = [e for e in plan['events'] if e.get('automation') and e['start'] <= t < e['start'] + e['duration']]
+        section['foreground'] = max(active, key=lambda e:float(curve(e['automation']['level'], (t-e['start'])/e['duration'])))['event_id'] if active else None
+
+
 def arrange(plan, snapshot, settings):
     from .plan import event, rng_for, source_span
     rule = settings.get('development', {})
@@ -112,6 +120,8 @@ def arrange(plan, snapshot, settings):
         e['level_calibration'] = {'source_nonzero_frame_rms': rms, 'target_rms': .035, 'max_gain': 3.}
         e['space'].update(wet=.12 * controls['space_motion'], tail_seconds=1.2 if controls['space_motion'] else 0,
                           decay_seconds=1.2, delay_seconds=.137 + .037 * i)
+        if technique == 'room':
+            e['space']['tail_seconds'] = max(e['space']['tail_seconds'], e['transform']['ir_frames'] / settings['sample_rate'])
         pan = [-.25, .4, -.6, .1][i]
         motion = controls['space_motion']
         e['pan'] = {'start': pan, 'end': pan + [ .2, -.4, .35, -.1][i] * motion}

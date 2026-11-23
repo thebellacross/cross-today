@@ -37,6 +37,10 @@ def test_saved_curves_replay_and_controlled_focus_preserves_other_stems(source):
     assert np.array_equal(a,again);assert report['development_analysis']['version']==VERSION
     assert available_features(report)==len(FEATURES);assert len(scoped_vector(p,report,{'kind':'range','start':2.,'end':8.}))==len(FEATURES)
     v=change(p,'focus-exchange','voice-00',77,snapshot)
+    from music.development import curve
+    for s in v['sections']:
+        t=(s['start']+s['end'])/2;active=[e for e in v['events'] if e['start']<=t<e['start']+e['duration']]
+        assert s['foreground']==max(active,key=lambda e:float(curve(e['automation']['level'],(t-e['start'])/e['duration'])))['event_id']
     b,other,newstems=render_plan(v,snapshot,cache,True);changed=set(v['decision_log'][-1]['changed_events'])
     assert len(changed)==2 and not np.array_equal(a,b)
     for e in p['events']:
@@ -47,6 +51,20 @@ def test_saved_curves_replay_and_controlled_focus_preserves_other_stems(source):
     with pytest.raises(ValueError,match='locked'):change(p,'focus-exchange','voice-00',77,snapshot,{'events':['voice-00'],'regions':[],'relations':[]})
     with pytest.raises(ValueError,match='locked'):change(p,'spectral-evolution','voice-00',77,snapshot,{'events':[],'regions':[[0,5]],'relations':[]})
     assert all(e['start']==p['events'][i]['start'] for row in proposals(p,snapshot,71,evidence=report) for i,e in enumerate(row['events']))
+
+def test_convolution_tail_is_in_the_declared_affected_range(source):
+    from music.plan import affected_bounds
+    snapshot,cache,g=source;g['controls'].update(processing_intensity=1.,space_motion=0.)
+    found=False
+    for seed in range(40):
+        p=plan_composition(snapshot,seed,10,g)
+        for e in p['events']:
+            if e['transform']['technique']=='room':
+                found=True
+                assert e['space']['tail_seconds']>=e['transform']['ir_frames']/g['sample_rate']
+                assert affected_bounds(p,[e['event_id']])[1]>=e['start']+e['duration']+e['transform']['ir_frames']/g['sample_rate']
+        if found:break
+    assert found
 
 def test_old_model_projection_and_no_invented_temporal_evidence():
     w=np.linspace(-.3,.5,36);old={'algorithm':'relational-bt-4','feature_names':PREVIOUS_FEATURES,'label_origin':'human','weights':w.tolist(),'ensemble':[w.tolist()],'families':3,'labels':4}

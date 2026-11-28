@@ -10,8 +10,8 @@ export function recordPoint(clientX, clientY, bounds, tilt, centerY=bounds.heigh
   return {r: Math.hypot(x, y), a: Math.atan2(x, -y)};
 }
 
-export function grooveProgress(point, progress, turns, reduced) {
-  const rotation = reduced ? 0 : -progress * turns;
+export function grooveProgress(point, progress, turns, reduced, rotationOffset=0) {
+  const rotation = (reduced ? 0 : -progress * turns)+rotationOffset/TAU;
   const phase = ((point.a / TAU - rotation) % 1 + 1) % 1;
   const turn = Math.floor((.47 - point.r) / groovePitch(turns) - phase + 1e-7) + phase;
   return clamp(turn / turns, 0, 1);
@@ -103,9 +103,9 @@ export async function loadRecord(image,album) {
 export class RecordView {
   constructor(record, canvas, needle, reduced) {
     this.record=record;this.canvas=canvas;this.needle=needle;this.reduced=reduced;this.hub=record.querySelector('#hub');
-    this.progress=0;this.turns=10;
+    this.progress=0;this.turns=10;this.rotationOffset=0;this.handRotation=null;
     this.resize=new ResizeObserver(()=>this.measure());this.resize.observe(record);
-    reduced.addEventListener('change',()=>this.update(this.progress,this.turns));
+    reduced.addEventListener('change',()=>{this.rotationOffset=0;this.handRotation=null;this.update(this.progress,this.turns);});
     this.measure();
   }
   measure() {
@@ -121,11 +121,16 @@ export class RecordView {
     this.update(this.progress,this.turns);
   }
   point(event) { return recordPoint(event.clientX,event.clientY,this.record.getBoundingClientRect(),this.tilt,this.centerY); }
+  get rotation() { return this.handRotation??((this.reduced.matches?0:-TAU*this.progress*this.turns)+this.rotationOffset); }
+  finishDrag(progress,turns) {
+    if(this.handRotation!==null)this.rotationOffset=(this.handRotation+(this.reduced.matches?0:TAU*progress*turns))%TAU;
+    this.handRotation=null;
+  }
   update(progress,turns) {
     this.progress=progress;this.turns=turns;
     const turn=progress*turns, angle=this.reduced.matches?turn*TAU:0;
     const radius=.47-turn*groovePitch(turns);
-    this.canvas.style.transform=this.reduced.matches?'none':`rotate(${-360*turn}deg)`;
+    this.canvas.style.transform=this.reduced.matches&&this.handRotation===null&&this.rotationOffset===0?'none':`rotate(${this.rotation*180/Math.PI}deg)`;
     if(this.hub)this.hub.style.transform=this.canvas.style.transform;
     this.needle.style.left=`${this.width*(.5+Math.sin(angle)*radius)}px`;
     this.needle.style.top=`${this.centerY-this.width*this.tilt*Math.cos(angle)*radius}px`;

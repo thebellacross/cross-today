@@ -2,7 +2,7 @@ name: Publish website
 on:
   push:
     branches: [main]
-    paths: ['web/**', 'scripts/build_site.py', 'scripts/prepare_record_preview.py', 'scripts/build_record_preview.mjs', '.github/workflows/pages.yml']
+    paths: ['web/**', 'scripts/build_site.py', 'scripts/refresh_bandcamp.py', 'scripts/prepare_record_preview.py', 'scripts/build_record_preview.mjs', '.github/workflows/pages.yml']
   workflow_run:
     workflows: ['Daily CROSS']
     types: [completed]
@@ -54,6 +54,9 @@ jobs:
         if: steps.artwork.outputs.changed == 'true'
         env:
           WORKER_URL: ${{ vars.WORKER_URL }}
+      - name: Refresh the public Bandcamp discography
+        if: steps.artwork.outputs.changed == 'true'
+        run: python scripts/refresh_bandcamp.py --out .state/pages --keep-on-error
       - uses: actions/configure-pages@v5
         if: steps.artwork.outputs.changed == 'true'
       - uses: actions/upload-pages-artifact@v3

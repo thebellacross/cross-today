@@ -1,5 +1,5 @@
 // Geometry is ready independently of configuration, album data and audio.
-import {RecordView} from './record.js?v=galaxy-3';
+import {RecordView} from './record.js?v=scratch-1';
 export const reduced=matchMedia('(prefers-reduced-motion: reduce)');
 export const recordView=new RecordView(document.getElementById('record'),document.getElementById('grooves'),document.getElementById('needle'),reduced);
 const image=document.getElementById('grooves');

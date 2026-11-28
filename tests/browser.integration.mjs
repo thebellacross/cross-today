@@ -40,7 +40,7 @@ for(const [name,type,options,context]of [
     await page.emulateMedia({reducedMotion:'reduce'});await page.waitForFunction(()=>document.querySelector('#grooves').style.transform==='none');
     if(name.includes('mobile')){await page.locator('.artist').scrollIntoViewIfNeeded();await page.locator('#sticky:not([hidden])').waitFor();await page.locator('#sticky-play').click();await page.waitForFunction(()=>document.querySelector('#audio').paused);}
     else await page.locator('#audio').evaluate(a=>a.pause());
-    const source=await page.locator('#audio').getAttribute('src');const range=await page.request.get(source,{headers:{Range:'bytes=0-1023'}});assert.equal(range.status(),206);assert.match(range.headers()['content-type'],/audio\//);
+    const range=await page.evaluate(async()=>{const r=await fetch(document.querySelector('#audio').src,{headers:{Range:'bytes=0-1023'},signal:AbortSignal.timeout(20000)});const bytes=(await r.arrayBuffer()).byteLength;return {status:r.status,type:r.headers.get('Content-Type'),bytes};});assert.equal(range.status,206);assert.match(range.type,/audio\//);assert.equal(range.bytes,1024);
     assert.deepEqual(errors,[]);results.push({browser:name,status:'passed',...dimensions,checks:['play/pause','audio-synchronised rotation','seek','track change','record drag','zoom','share','reduced motion','Bandcamp destinations','elliptical hit testing','centred profile and new content order','no download/score/catalogue entry','Range 206']});
   }catch(e){results.push({browser:name,status:'failed',error:e.message,pageErrors:errors});}
   finally{if(browser)await browser.close();}

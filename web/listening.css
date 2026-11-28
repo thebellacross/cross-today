@@ -74,6 +74,8 @@ body.listening-page {
 .listening-page .artist .photo { width:96px; height:96px; float:none; margin:0; border-radius:0; object-fit:cover; background:none; }
 .listening-page .artist h2 { font-size:16px; font-weight:500; margin:6px 0 3px; }
 .artist-profile h2 a { color:var(--ink); }
+.artist-platforms { display:flex; justify-content:center; align-items:center; flex-wrap:wrap; gap:4px 16px; }
+.artist-platforms a { white-space:nowrap; }
 .discography-section { width:min(900px,100%); margin:14px auto 0; }
 .listening-page .artist h3 { font-size:13px; font-weight:400; margin:0 0 12px; padding:0; }
 .listening-page .artist #discography { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:24px; overflow:visible; }

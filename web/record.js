@@ -86,7 +86,12 @@ export class RecordView {
   }
   measure() {
     this.width=this.record.clientWidth;this.height=this.record.clientHeight;
-    this.tilt=Number(getComputedStyle(this.record).getPropertyValue('--disc-tilt'))||.3;
+    const preferred=Number(getComputedStyle(this.record).getPropertyValue('--disc-tilt'))||.21;
+    // Short windows still show the whole plane and its upright needle. The same
+    // projection is used for drawing, pointer coordinates and progress location.
+    const needleHeight=this.needle.getBoundingClientRect().height||38;
+    this.tilt=Math.min(preferred,Math.max(.06,(this.height-2*needleHeight-12)/(this.width*.95)));
+    this.record.style.setProperty('--disc-projection',this.tilt);
     this.update(this.progress,this.turns);
   }
   point(event) { return recordPoint(event.clientX,event.clientY,this.record.getBoundingClientRect(),this.tilt); }

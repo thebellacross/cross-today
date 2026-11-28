@@ -4,7 +4,7 @@ import {recordPoint,grooveProgress,groovePitch} from '../web/record.js';
 
 test('projected grooves seek to their audio time at desktop, mobile and zoom sizes',()=>{
   const turns=19.3;
-  for(const [width,height,tilt] of [[1440,1440/2.65,.3],[390,210,.34],[2000,2000/2.65,.3]]) {
+  for(const [width,height,tilt] of [[1440,352,.193],[390,155,.21],[2000,308,.115],[2560,264,.072]]) {
     const bounds={left:17,top:240,width,height};
     for(const reduced of [false,true]) for(const playing of [0,.23,.65,.98]) for(const desired of [.02,.3,.53,.9]) {
       const turn=desired*turns,radius=.47-(turn+.45)*groovePitch(turns);

@@ -13,8 +13,9 @@ try {
   // Click a known groove in the projected plane and verify its album audio position.
   await page.locator('#record').scrollIntoViewIfNeeded();
   const rect=await page.locator('#record').boundingBox();
+  const projection=await page.locator('#record').evaluate(e=>Number(getComputedStyle(e).getPropertyValue('--disc-projection')));
   const desired=.32,turn=album.turns*desired,r=.47-(turn+.45)*(.36/(album.turns+.9)),angle=turn*Math.PI*2;
-  await page.mouse.click(rect.x+rect.width*(.5+Math.sin(angle)*r),rect.y+rect.height/2-rect.width*.3*Math.cos(angle)*r);
+  await page.mouse.click(rect.x+rect.width*(.5+Math.sin(angle)*r),rect.y+rect.height/2-rect.width*projection*Math.cos(angle)*r);
   await page.waitForFunction(()=>document.querySelector('#audio').readyState>=1);
   const actual=await page.locator('#audio').evaluate(a=>({src:a.src,time:a.currentTime,paused:a.paused}));
   const track=album.tracks.findIndex(t=>t.src===actual.src);
@@ -28,6 +29,9 @@ try {
   await page.goto(base);await page.locator('#play:not([disabled])').waitFor();await page.waitForFunction(()=>document.querySelector('#heard').textContent.includes('unavailable'));
   assert.notEqual(await page.locator('#track-title').textContent(),'No playable edition');await page.locator('#audio').evaluate(a=>a.volume=0);await page.locator('#play').click();await page.waitForFunction(()=>document.querySelector('#audio').currentTime>.2);await page.locator('#play').click();checks.push('source-detail failure does not disable or mislabel playable audio');
   await page.unroute('**/score.json');
+  await page.locator('#score-retry').click();await page.locator('#scores details').first().waitFor();
+  assert.equal(await page.locator('#scores details').count(),album.tracks.length);assert.equal(await page.locator('#score-retry').isVisible(),false);
+  assert.ok(!(await page.locator('#heard').textContent()).includes('unavailable'));checks.push('score retry restores complete timelines and live source labels');
   await page.route('**/cover.png',r=>r.fulfill({status:503,body:''}));
   await page.goto(base);await page.locator('#play:not([disabled])').waitFor();await page.locator('#status:not([hidden])').waitFor();assert.match(await page.locator('#status').innerText(),/record image/);
   await page.locator('#audio').evaluate(a=>a.volume=0);await page.locator('#play').click();await page.waitForFunction(()=>document.querySelector('#audio').currentTime>.2);checks.push('image failure leaves audio usable with clear status');

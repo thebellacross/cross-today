@@ -1,11 +1,13 @@
+import {renderScore} from './score-view.js';
 const status=document.getElementById('score-status'),retry=document.getElementById('score-retry');
-async function load(){status.textContent='Loading the published score…';retry.hidden=true;document.getElementById('error').textContent='';
-try{const {$,time,get,loadAlbum,element}=await import('./client.js?score='+Date.now());const a=await loadAlbum(),s=await get(a.score);if(!Array.isArray(s.tracks)||!s.tracks.length)throw Error('The score contains no tracks.');$('scores').replaceChildren();$('provenance').replaceChildren();$('title').textContent=a.catalog+' '+a.title;$('edition').textContent=`${a.day} · seed ${a.seed} · engine ${a.engine_hash.slice(0,12)}`;$('provenance').append(element('a',{href:new URL('provenance.json',a.score).href},'Download reproduction record'));
-for(const [i,t]of s.tracks.entries()){
- const details=element('details'),summary=element('summary',{},`${t.n}. ${t.title} · ${t.form} · ${time(t.duration)}`);details.open=i===0;details.append(summary);if(!t.plan)details.append(element('p',{},'Legacy event summary: this engine did not capture every loop offset or apply every named transition. This is not a complete replay plan.'));
- const canvas=element('canvas',{class:'score-chart',width:'900',height:String(Math.max(100,(t.lanes||5)*18)),'aria-label':'Actual event timeline, including effect tails'});details.append(canvas);const ctx=canvas.getContext('2d');
- t.events.forEach(e=>{const y=e.lane/(t.lanes||5)*(canvas.height-10)+5,h=Math.max(5,(canvas.height-20)/(t.lanes||5)-4);ctx.fillStyle=a.palette[e.lane%a.palette.length];ctx.globalAlpha=.75;ctx.fillRect(e.start/t.duration*900,y,Math.max(2,e.duration/t.duration*900),h);if(e.tail_seconds){ctx.globalAlpha=.25;ctx.fillRect((e.start+e.duration)/t.duration*900,y,e.tail_seconds/t.duration*900,h);}details.append(element('div',{class:'score-event'},`${time(e.start)} +${e.duration.toFixed(2)}s${e.tail_seconds?' + tail '+e.tail_seconds.toFixed(2)+'s':''} · ${e.name} [${e.segment_start.toFixed(2)}–${e.segment_end.toFixed(2)}s] · ${e.technique}${e.role?' · '+e.role:''}`));});
- if(t.plan){if(t.plan.development){details.append(element('p',{},`Development: ${t.plan.development.arc}. Voices persist across scenes; source read positions do not restart at section boundaries. Level, frequency and spatial trajectories are saved in the plan.`));for(const section of t.plan.sections)details.append(element('p',{},`${time(section.start)}–${time(section.end)} · ${section.purpose} · planned foreground: ${t.plan.events.find(e=>e.event_id===section.foreground)?.source.name||'none'}`));}const dl=element('button',{type:'button'},'Download composition plan');dl.onclick=()=>{const u=URL.createObjectURL(new Blob([JSON.stringify(t.plan,null,2)],{type:'application/json'}));const link=element('a',{href:u,download:`${a.id}-track-${t.n}-plan.json`});link.click();setTimeout(()=>URL.revokeObjectURL(u),1000);};details.append(dl);}$('scores').append(details);
-}status.textContent=`${s.tracks.length} tracks loaded. Open a track to inspect its events.`;
-}catch(e){status.textContent='Score could not be loaded.';document.getElementById('error').textContent=e.message;retry.hidden=false;}}
+async function load(){
+  status.textContent='Loading the published score…';retry.hidden=true;document.getElementById('error').textContent='';
+  try{
+    const {$,get,loadAlbum}=await import('./client.js?score='+Date.now());
+    const album=await loadAlbum(),score=await get(album.score);
+    renderScore(document.querySelector('.document-panel'),album,score);
+    $('title').textContent=album.catalog+' '+album.title;
+    status.textContent=`${score.tracks.length} tracks loaded. Open a track to inspect its events.`;
+  }catch(error){status.textContent='Score could not be loaded.';document.getElementById('error').textContent=error.message;retry.hidden=false;}
+}
 retry.onclick=load;load();

@@ -8,7 +8,7 @@
   <title>CROSS</title>
   <link rel="icon" href="assets/artist/bellacross.jpg">
   <link rel="stylesheet" href="style.css">
-  <link rel="stylesheet" href="listening.css?v=galaxy-1">
+  <link rel="stylesheet" href="listening.css?v=galaxy-2">
 </head>
 <body class="listening-page">
 <div class="site">
@@ -54,8 +54,7 @@
       <p id="record-help" class="visually-hidden">Drag the record to seek. Tap its centre to play or pause. Use left and right arrow keys to move five seconds.</p>
       <div class="record-caption">
         <div class="now-hearing" id="hearing"><b>now hearing</b><div id="heard">Press play to listen.</div></div>
-        <div class="share"><button id="share">↥ &nbsp;Share / Embed</button></div>
-        <p class="seed" id="seed"></p>
+        <div class="record-meta"><div class="share"><button id="share">↥ &nbsp;Share / Embed</button></div><p class="seed" id="seed"></p></div>
       </div>
     </section>
     <section class="track-list" aria-label="Album tracks"><ol id="tracks" class="tracks"></ol></section>
@@ -72,18 +71,28 @@
         <a class="bandcamp-link all-music" href="https://bellacrossmusic.bandcamp.com/">View all music →</a>
       </div>
     </section>
-    <details class="edition-notes">
-      <summary>about this edition</summary>
+    <section class="edition-notes" aria-labelledby="about-heading">
+      <h2 id="about-heading">about this edition</h2>
       <section class="about"><p id="about">Selected recordings, chance operations, and a new seed. One edition each day.</p><p id="rules"></p></section>
       <section class="credits"><h2>credits</h2><p id="credits"></p><p id="release-date"></p></section>
-    </details>
+    </section>
+    <section id="score-section" class="inline-score" aria-labelledby="score-heading">
+      <h2 id="score-heading">The score</h2>
+      <p>Choose from the artist's selected recordings. Make a stable snapshot. Draw a new seed. Arrange tapes, fuse recorded sound with data, or find loops within the recordings. New composition plans record contextual roles, transitions, processing and spatial relationships. A stable private preference profile can rank alternatives; learning is not inferred from the age of the series. Draw the grooves from the finished sound. Prepare the next edition in advance and publish it each day.</p>
+      <p id="score-edition" data-score="edition"></p>
+      <p id="provenance" data-score="provenance"></p>
+      <p id="score-status" role="status">Loading the published score…</p>
+      <button id="score-retry" hidden>Retry score loading</button>
+      <div id="scores" data-score="tracks"></div>
+      <p id="score-error" role="status"></p>
+    </section>
   </main>
-  <footer><a class="bandcamp-link artist-name" href="https://bellacrossmusic.bandcamp.com/">CROSS</a><a id="admin-link" hidden>Manage this project</a></footer>
+  <footer><a class="bandcamp-link artist-name" href="https://bellacrossmusic.bandcamp.com/">CROSS</a></footer>
 </div>
 <div id="sticky" hidden><img id="sticky-cover" alt=""><span id="sticky-title"></span><button id="sticky-play" aria-label="Play or pause">▶</button></div>
 <dialog id="zoom"><button id="close-zoom" aria-label="Close enlarged record">×</button><div id="zoom-slot"></div></dialog>
 <dialog id="share-dialog"><button class="close-dialog" aria-label="Close share">×</button><h2>Share this record</h2><label>Link<input id="share-url" readonly></label><button id="copy-link">Copy link</button><label>Embed<textarea id="embed-code" readonly></textarea></label><button id="copy-embed">Copy embed</button><p id="copy-status" role="status"></p></dialog>
 <audio id="audio" preload="metadata" crossorigin="anonymous"></audio>
-<script type="module" src="app.js?v=galaxy-1"></script>
+<script type="module" src="app.js?v=galaxy-2"></script>
 </body>
 </html>

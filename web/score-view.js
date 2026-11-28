@@ -16,8 +16,8 @@ export function renderScore(root,album,score) {
   root.querySelector('[data-score="edition"]').textContent=`${album.day} · seed ${album.seed} · engine ${(album.engine_hash||'').slice(0,12)}`;
   provenance.append(element('a',{href:new URL('provenance.json',album.score).href},'Download reproduction record'));
   const dark=root.classList.contains('inline-score');
-  for(const [index,track]of score.tracks.entries()) {
-    const details=element('details');details.open=index===0;
+  for(const track of score.tracks) {
+    const details=element('details');
     details.append(element('summary',{},`${track.n}. ${track.title} · ${track.form} · ${time(track.duration)}`));
     if(!track.plan)details.append(element('p',{},'Legacy event summary: this engine did not capture every loop offset or apply every named transition. This is not a complete replay plan.'));
     const lanes=track.lanes||5;

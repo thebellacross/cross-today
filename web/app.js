@@ -2,7 +2,7 @@ import {$,time,get,loadAlbum,artist,element,local} from './client.js';
 import {loadRecord,grooveProgress} from './record.js?v=galaxy-3';
 import {recordView,reduced} from './record-boot.js';
 import {TrackPicker} from './track-picker.js';
-import {renderScore} from './score-view.js';
+import {renderScore} from './score-view.js?v=collapsed-1';
 const audio=$('audio'),record=$('record');
 const trackPicker=new TrackPicker($('tracks'),$('track-count'),reduced);
 let album,score,index=0,starts=[],engaged=false,drag=null,seekPending=null,frame=0,wasPlaying=false,playerVisible=true;

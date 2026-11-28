@@ -4,12 +4,12 @@ import {recordPoint,grooveProgress,groovePitch} from '../web/record.js';
 
 test('projected grooves seek to their audio time at desktop, mobile and zoom sizes',()=>{
   const turns=19.3;
-  for(const [width,height,tilt] of [[1440,352,.193],[390,155,.21],[2000,308,.115],[2560,264,.072]]) {
+  for(const [width,height,tilt] of [[1440,315,.193],[390,140,.26],[2000,308,.115],[2560,264,.072]]) {
     const bounds={left:17,top:240,width,height};
-    for(const reduced of [false,true]) for(const playing of [0,.23,.65,.98]) for(const desired of [.02,.3,.53,.9]) {
+    for(const centerY of [height/2,(height+38)/2]) for(const reduced of [false,true]) for(const playing of [0,.23,.65,.98]) for(const desired of [.02,.3,.53,.9]) {
       const turn=desired*turns,radius=.47-(turn+.45)*groovePitch(turns);
       const angle=2*Math.PI*(turn-(reduced?0:playing*turns));
-      const point=recordPoint(bounds.left+width*(.5+Math.sin(angle)*radius),bounds.top+height/2-width*tilt*Math.cos(angle)*radius,bounds,tilt);
+      const point=recordPoint(bounds.left+width*(.5+Math.sin(angle)*radius),bounds.top+centerY-width*tilt*Math.cos(angle)*radius,bounds,tilt,centerY);
       assert.ok(Math.abs(grooveProgress(point,playing,turns,reduced)-desired)<1e-10);
     }
   }

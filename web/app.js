@@ -1,16 +1,18 @@
 import {$,time,get,loadAlbum,artist,element,local} from './client.js';
-import {drawGalaxy,RecordView,grooveProgress} from './record.js?v=galaxy-2';
+import {loadRecord,grooveProgress} from './record.js?v=galaxy-3';
+import {recordView,reduced} from './record-boot.js';
+import {TrackPicker} from './track-picker.js';
 import {renderScore} from './score-view.js';
-const audio=$('audio'),record=$('record'),reduced=matchMedia('(prefers-reduced-motion: reduce)');
-const recordView=new RecordView(record,$('grooves'),$('needle'),reduced);
+const audio=$('audio'),record=$('record');
+const trackPicker=new TrackPicker($('tracks'),$('track-count'),reduced);
 let album,score,index=0,starts=[],engaged=false,drag=null,seekPending=null,frame=0,wasPlaying=false,playerVisible=true;
-const announce=message=>{$('status').textContent=message;$('status').hidden=false;};
-async function play(){try{await audio.play();engaged=true;record.classList.add('engaged');}catch{announce('Playback was not started. Tap Play to try again.');}}
+const announce=(message,kind='general')=>{$('status').textContent=message;$('status').dataset.kind=kind;$('status').hidden=false;};
+async function play(){const source=audio.src;try{await audio.play();engaged=true;record.classList.add('engaged');if($('status').dataset.kind==='playback')$('status').hidden=true;}catch(error){if(error.name==='AbortError'||source!==audio.src)return;announce('Playback was not started. Tap Play to try again.','playback');}}
 function toggle(){audio.paused?play():audio.pause();}
 function choose(i,position=0,resume=!audio.paused){
   if(!album)return;index=(i+album.tracks.length)%album.tracks.length;const t=album.tracks[index];seekPending=Math.min(position,t.duration-.001);
   audio.src=t.src;audio.load();$('track-title').textContent=t.title;$('sticky-title').textContent=t.title;
-  history.replaceState(null,'','#'+(index+1));document.querySelectorAll('.tracks li').forEach((li,k)=>li.classList.toggle('current',k===index));
+  history.replaceState(null,'','#'+(index+1));trackPicker.select(index,engaged);
   if('mediaSession' in navigator){navigator.mediaSession.metadata=new MediaMetadata({title:t.title,artist:album.artist,album:album.catalog+' '+album.title,artwork:[{src:album.cover_small,sizes:'350x350',type:'image/jpeg'}]});}
   if(resume)play();update();
 }
@@ -22,8 +24,8 @@ function update(){
   record.setAttribute('aria-valuenow',String(Math.round(progress*100)));record.setAttribute('aria-valuetext',`${t.title}, ${time(position)} of ${time(t.duration)}`);
   $('play').classList.toggle('playing',!audio.paused);$('play').setAttribute('aria-label',audio.paused?'Play':'Pause');$('sticky-play').textContent=audio.paused?'▶':'Ⅱ';
   $('sticky').hidden=playerVisible||!engaged;
-  document.querySelectorAll('.track-play').forEach((e,k)=>e.textContent=k===index&&!audio.paused?'Ⅱ':'▶');
-  if(score&&engaged){$('hearing').hidden=false;const events=score.tracks[index]?.events.filter(e=>position>=e.start&&position<(e.active_until??e.start+e.duration)&&e.gain>=.0158).sort((a,b)=>b.gain-a.gain)||[];const labels=[...new Set(events.map(e=>`${e.name} · ${e.technique}`))].slice(0,5);const text=labels.join(' / ')||'between sounds';if($('heard').textContent!==text)$('heard').textContent=text;}
+  document.querySelectorAll('.track-play').forEach((e,k)=>{const playing=k===index&&!audio.paused;e.textContent=playing?'Ⅱ':'▶';e.setAttribute('aria-label',`${playing?'Pause':'Play'} ${album.tracks[k].title}`);});
+  if(score&&engaged){$('hearing').hidden=false;const events=score.tracks[index]?.events.filter(e=>position>=e.start&&position<(e.active_until??e.start+e.duration)&&e.gain>=.0158).sort((a,b)=>b.gain-a.gain)||[];const labels=[...new Set(events.map(e=>`${e.name} · ${e.technique}`))].slice(0,5);const text=labels.join(' / ')||'between sounds';if($('heard').textContent!==text){$('heard').textContent=text;$('heard').title=text;}}
   if('mediaSession'in navigator&&audio.duration&&Number.isFinite(audio.duration)){try{navigator.mediaSession.setPositionState({duration:audio.duration,position:Math.min(audio.currentTime,audio.duration),playbackRate:1});}catch{}}
 }
 function loop(){update();if(!audio.paused||drag)frame=requestAnimationFrame(loop);}
@@ -53,12 +55,14 @@ document.querySelector('.close-dialog').onclick=()=>$('share-dialog').close();
 for(const [button,input]of [['copy-link','share-url'],['copy-embed','embed-code']])$(button).onclick=async()=>{try{await navigator.clipboard.writeText($(input).value);$('copy-status').textContent='Copied';}catch{$(input).select();$('copy-status').textContent='Select and copy the text above.';}};
 new IntersectionObserver(([entry])=>{playerVisible=entry.isIntersecting;update();},{threshold:0}).observe($('main-player'));
 if('mediaSession'in navigator){navigator.mediaSession.setActionHandler('play',play);navigator.mediaSession.setActionHandler('pause',()=>audio.pause());navigator.mediaSession.setActionHandler('previoustrack',()=>choose(index-1));navigator.mediaSession.setActionHandler('nexttrack',()=>choose(index+1));navigator.mediaSession.setActionHandler('seekto',e=>{audio.currentTime=e.seekTime;});}
-async function init(){
-  const a=await artist();for(const work of [...a.albums].sort((x,y)=>y.released.localeCompare(x.released))){const link=element('a',{href:work.url,class:'disco-item',rel:'noopener'});link.append(element('img',{src:work.cover,alt:work.title,loading:'lazy'}),element('span',{},work.title),element('small',{},new Date(work.released+'T00:00:00').toLocaleDateString('en',{month:'short',year:'numeric'})));$('discography').append(link);}
+async function initArtist(){
+  const a=await artist();for(const work of [...a.albums].sort((x,y)=>y.released.localeCompare(x.released))){const link=element('a',{href:work.url,class:'disco-item',rel:'noopener'});link.append(element('img',{src:work.cover,alt:work.title,loading:'lazy',fetchpriority:'low'}),element('span',{},work.title),element('small',{},new Date(work.released+'T00:00:00').toLocaleDateString('en',{month:'short',year:'numeric'})));$('discography').append(link);}
   if(a.bio){$('bio').hidden=false;$('bio').textContent=a.bio;}
-  album=await loadAlbum();document.title=`${album.catalog} ${album.title} | ${a.name}`;$('album-title').textContent=album.catalog+' '+album.title;
-  $('hub').src=album.cover;$('sticky-cover').src=album.cover_small;
-  drawGalaxy($('grooves'),album).catch(()=>announce('The record image could not be loaded. Audio playback is still available; refresh to try the image again.'));
+}
+async function init(){
+  album=await loadAlbum();document.title=`${album.catalog} ${album.title} | ${album.artist||'CROSS'}`;$('album-title').textContent=album.catalog+' '+album.title;
+  $('sticky-cover').src=album.cover_small;
+  loadRecord($('grooves'),album).catch(()=>announce('The record image could not be loaded. Audio playback is still available; refresh to try the image again.'));
   $('seed').textContent=`seed ${album.seed}`;$('credits').textContent=album.credits;$('release-date').textContent=`released ${album.day}`;
   $('rules').textContent=`Daily publication around ${String(album.rules.publish_hour).padStart(2,'0')}:00 (${album.rules.timezone}). The latest ${album.rules.keep_releases} editions stay available. Catalogue cards and Selected recordings remain. ${album.final?'Chance has ended this series. This final edition stays.':album.rules.random_end?`This edition had a 1 in ${album.last_odds} chance of ending the series.`:'The series continues daily.'}`;
   let offset=0;album.tracks.forEach((track,k)=>{starts.push(offset);offset+=track.duration;const row=element('li');const b=element('button',{class:'track-play','aria-label':`Play ${track.title}`},'▶');b.onclick=()=>k===index?toggle():choose(k,0,true);const label=element('button',{class:'track-name'},track.title);label.onclick=()=>choose(k,0,true);const line=element('div');line.append(label,element('span',{class:'track-duration'},time(track.duration)));row.append(b,element('span',{class:'track-number'},`${k+1}.`),line);$('tracks').append(row);});
@@ -79,4 +83,5 @@ async function loadScore(){
   }
 }
 $('score-retry').onclick=loadScore;
+initArtist().catch(()=>{const link=element('a',{href:'https://bellacrossmusic.bandcamp.com/'},'Browse the discography on Bandcamp');$('discography').append(link);});
 init().catch(e=>{announce(e.message);$('track-title').textContent='No playable edition';});

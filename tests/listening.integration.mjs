@@ -14,8 +14,9 @@ try {
   await page.locator('#record').scrollIntoViewIfNeeded();
   const rect=await page.locator('#record').boundingBox();
   const projection=await page.locator('#record').evaluate(e=>Number(getComputedStyle(e).getPropertyValue('--disc-projection')));
+  const centerY=await page.locator('#record').evaluate(e=>parseFloat(getComputedStyle(e).getPropertyValue('--disc-center')));
   const desired=.32,turn=album.turns*desired,r=.47-(turn+.45)*(.36/(album.turns+.9)),angle=turn*Math.PI*2;
-  await page.mouse.click(rect.x+rect.width*(.5+Math.sin(angle)*r),rect.y+rect.height/2-rect.width*projection*Math.cos(angle)*r);
+  await page.mouse.click(rect.x+rect.width*(.5+Math.sin(angle)*r),rect.y+centerY-rect.width*projection*Math.cos(angle)*r);
   await page.waitForFunction(()=>document.querySelector('#audio').readyState>=1);
   const actual=await page.locator('#audio').evaluate(a=>({src:a.src,time:a.currentTime,paused:a.paused}));
   const track=album.tracks.findIndex(t=>t.src===actual.src);

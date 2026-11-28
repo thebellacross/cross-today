@@ -6,9 +6,11 @@
   <meta name="theme-color" content="#050506">
   <meta name="description" content="Daily generative recordings by CROSS, made from the artist's own sound materials.">
   <title>CROSS</title>
+  <script>if(location.protocol==='file:')location.replace('https://thebellacross.github.io/cross-today/'+location.search+location.hash);</script>
+  <link rel="preload" as="image" href="assets/record-outline.svg" fetchpriority="high">
   <link rel="icon" href="assets/artist/bellacross.jpg">
   <link rel="stylesheet" href="style.css">
-  <link rel="stylesheet" href="listening.css?v=galaxy-2">
+  <link rel="stylesheet" href="listening.css?v=galaxy-3">
 </head>
 <body class="listening-page">
 <div class="site">
@@ -22,7 +24,6 @@
   <main class="album-panel">
     <section class="album-intro" aria-labelledby="album-title">
       <h1 id="album-title">CROSS</h1>
-      <p class="byline">by <a class="bandcamp-link artist-name" href="https://bellacrossmusic.bandcamp.com/">CROSS</a></p>
       <div class="player" id="main-player">
         <button class="play" id="play" aria-label="Play" disabled><span></span></button>
         <div class="transport">
@@ -40,10 +41,10 @@
       <div id="record-wrap">
         <div id="record" tabindex="0" role="slider" aria-label="Record playback position" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-describedby="record-help">
           <div id="record-plane" aria-hidden="true">
-            <canvas id="grooves" width="1600" height="1600"></canvas>
-            <img id="hub" alt="" draggable="false">
+            <img id="grooves" src="assets/record-outline.svg" data-preview-id="" data-preview-hash="" width="1600" height="1600" fetchpriority="high" decoding="async" elementtiming="record-artwork" alt="" draggable="false">
+            <img id="hub" class="artist-avatar" src="assets/artist/bellacross.jpg" alt="" draggable="false">
+            <span id="spindle"></span>
           </div>
-          <div id="core-glow" aria-hidden="true"></div>
           <div id="needle" aria-hidden="true">
             <svg viewBox="0 0 24 52"><path class="needle-left" d="M12 1 1 13 12 50Z"/><path class="needle-right" d="M12 1 23 13 12 50Z"/><path class="needle-top" d="m12 1 11 12-11 5L1 13Z"/></svg>
             <i></i>
@@ -57,7 +58,7 @@
         <div class="record-meta"><div class="share"><button id="share">↥ &nbsp;Share / Embed</button></div><p class="seed" id="seed"></p></div>
       </div>
     </section>
-    <section class="track-list" aria-label="Album tracks"><ol id="tracks" class="tracks"></ol></section>
+    <section class="track-list" aria-label="Album tracks"><div class="track-picker"><ol id="tracks" class="tracks" tabindex="0" aria-label="Tracks. Scroll to browse, then choose a track to play."></ol><span id="track-count" class="track-count" aria-hidden="true"></span></div></section>
     <section class="artist" aria-label="About CROSS and discography">
       <div class="artist-profile">
         <a class="bandcamp-link avatar-link" href="https://bellacrossmusic.bandcamp.com/" aria-label="CROSS on Bandcamp"><img class="artist-avatar photo" src="assets/artist/bellacross.jpg" alt="CROSS" loading="lazy"></a>
@@ -93,6 +94,7 @@
 <dialog id="zoom"><button id="close-zoom" aria-label="Close enlarged record">×</button><div id="zoom-slot"></div></dialog>
 <dialog id="share-dialog"><button class="close-dialog" aria-label="Close share">×</button><h2>Share this record</h2><label>Link<input id="share-url" readonly></label><button id="copy-link">Copy link</button><label>Embed<textarea id="embed-code" readonly></textarea></label><button id="copy-embed">Copy embed</button><p id="copy-status" role="status"></p></dialog>
 <audio id="audio" preload="metadata" crossorigin="anonymous"></audio>
-<script type="module" src="app.js?v=galaxy-2"></script>
+<script type="module" src="record-boot.js"></script>
+<script type="module" src="app.js?v=galaxy-3"></script>
 </body>
 </html>

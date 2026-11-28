@@ -4,6 +4,7 @@ import datetime
 import html
 import json
 import re
+from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
 from urllib.request import Request, urlopen
@@ -16,23 +17,59 @@ def fetch(url):
         return response.read()
 
 
+class ReleaseGrid(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.items = []
+        self.item = None
+        self.in_title = False
+
+    def handle_starttag(self, tag, attributes):
+        attrs = dict(attributes)
+        if tag == 'li' and 'music-grid-item' in attrs.get('class', '').split():
+            self.item = {'title': ''}
+        if self.item is None:
+            return
+        if tag == 'a' and attrs.get('href'):
+            self.item['href'] = attrs['href']
+        if tag == 'img':
+            self.item['image'] = attrs.get('data-original') or attrs.get('src', '')
+        if tag == 'p' and 'title' in attrs.get('class', '').split():
+            self.in_title = True
+
+    def handle_data(self, data):
+        if self.in_title and self.item is not None:
+            self.item['title'] += data
+
+    def handle_endtag(self, tag):
+        if tag == 'p':
+            self.in_title = False
+        if tag == 'li' and self.item is not None:
+            self.items.append(self.item)
+            self.item = None
+
+
 def releases(page, base):
+    parser = ReleaseGrid()
+    parser.feed(page)
     result = []
-    for block in re.findall(r'<li\b[^>]*class="[^"]*music-grid-item[^>]*>(.*?)</li>', page, re.S):
-        link = re.search(r'<a\s+href="([^"]+)"', block)
-        title = re.search(r'<p\s+class="title"[^>]*>(.*?)</p>', block, re.S)
-        cover = re.search(r'<img[^>]*(?:src|data-original)="(https://[^\"]+bcbits\.com/[^\"]+)"', block)
-        if not all((link, title, cover)):
+    for entry in parser.items:
+        if not entry.get('href') or not entry.get('image') or not entry['title'].strip():
             continue
-        url = urljoin(base, html.unescape(link[1]))
+        url = urljoin(base, entry['href'])
         slug = urlparse(url).path.rstrip('/').split('/')[-1]
+        source = urljoin(base, entry['image'])
         if urlparse(url).hostname != urlparse(base).hostname or not re.fullmatch(r'[a-z0-9-]+', slug):
             continue
-        source = re.sub(r'_\d+\.jpg$', '_16.jpg', html.unescape(cover[1]))
-        result.append({'title': html.unescape(re.sub(r'<[^>]+>', '', title[1])).strip(),
-                       'url': url, 'cover': f'assets/artist/{slug}.jpg', 'cover_source': source})
+        if not (urlparse(source).hostname or '').endswith('.bcbits.com'):
+            continue
+        source = re.sub(r'_\d+\.jpg$', '_16.jpg', source)
+        result.append({'title': entry['title'].strip(), 'url': url,
+                       'cover': f'assets/artist/{slug}.jpg', 'cover_source': source})
     if not result:
-        raise ValueError('No public Bandcamp releases could be verified')
+        title = re.search(r'<title[^>]*>(.*?)</title>', page, re.S | re.I)
+        label = html.unescape(re.sub(r'<[^>]+>', '', title[1])).strip()[:80] if title else 'no title'
+        raise ValueError(f'No public releases in response ({len(page)} characters, {label!r})')
     return result
 
 
@@ -83,4 +120,4 @@ if __name__ == '__main__':
     except Exception as error:
         if not args.keep_on_error:
             raise
-        print(f'Bandcamp refresh unavailable ({type(error).__name__}); kept the verified discography.')
+        print(f'Bandcamp refresh unavailable ({type(error).__name__}: {error}); kept the verified discography.')

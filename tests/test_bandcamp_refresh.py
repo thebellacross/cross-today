@@ -10,6 +10,12 @@ spec.loader.exec_module(module)
 
 
 class BandcampRefreshTest(unittest.TestCase):
+    def test_lazy_images_relative_protocol_and_html_attribute_variants(self):
+        page = "<li class='square music-grid-item'><a href='/album/cross'><img src='placeholder' data-original='//f4.bcbits.com/img/a0409425978_2.jpg'><p class='title'>CROSS &amp; more</p></a></li>"
+        item = module.releases(page, 'https://bellacrossmusic.bandcamp.com/')[0]
+        self.assertEqual(item['title'], 'CROSS & more')
+        self.assertEqual(item['cover_source'], 'https://f4.bcbits.com/img/a0409425978_16.jpg')
+
     def test_new_release_is_added_without_changing_artist_identity(self):
         base = 'https://bellacrossmusic.bandcamp.com/'
         grid = '<li class="music-grid-item"><a href="/album/cross"><img src="https://f4.bcbits.com/img/a0409425978_2.jpg"><p class="title">CROSS</p></a></li>'

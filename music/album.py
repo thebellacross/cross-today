@@ -15,6 +15,9 @@ from .engine import render
 from .artwork import analyze,palette,cover
 
 def title_for(score,rng,index):
+    if score.get('plan',{}).get('development',{}).get('mode')=='story':
+        from .titles import title_for as experience_title
+        return experience_title(score,rng)
     names=list(dict.fromkeys(e['name'] for e in score['events']))
     tokens=[]
     for name in names:
@@ -93,7 +96,7 @@ def create_album(snapshot,cache,output,seed,day,number=0,settings=None,short=Non
     colors=palette(np.average(moods,axis=0,weights=durations));turns=cover(rings,durations,colors,output,ROOT/'web/assets/artist/bellacross.jpg')
     number=int(number);catalog=f'{cfg["series"]["catalog_prefix"]}{number:03d}'
     # Titles are derived from supplied filenames and processes, not invented prior works.
-    title=' '.join(tracks[0]['title'].split()[:-1])
+    title=tracks[0]['title'] if scores[0].get('title_basis') else ' '.join(tracks[0]['title'].split()[:-1])
     for track in tracks:
         temporary=output/(str(track['n'])+'.tagged.mp3')
         run_audio(['-y','-i',output/track['src'],'-i',output/'cover.png','-map','0:a','-map','1:v','-c:a','copy','-c:v','mjpeg','-id3v2_version','3','-metadata',f'album={catalog} {title}','-metadata',f'date={day}','-metadata:s:v','title=Album cover','-metadata:s:v','comment=Cover (front)',temporary])

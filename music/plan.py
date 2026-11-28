@@ -71,7 +71,7 @@ def event(seed,eid,section,clip,start,duration,role,tech,c,clips):
             'pan':{'start':pan,'end':max(-1.,min(1.,pan+motion))},'space':{'width':c['stereo_width'],'wet':float(rs.uniform(0,.35))*c['space_motion'],'delay_seconds':float(rs.uniform(.04,.22)),'decay_seconds':tail,'tail_seconds':tail},
             'transform':params,'decision':{'origin':'seeded-plan','seed':str(seed_for(seed,eid)),'contextual_role':True}}
 
-def plan_composition(snapshot,seed,seconds,settings,context='open',family=None):
+def plan_composition(snapshot,seed,seconds,settings,context='open',family=None,analysis=None):
     clips=snapshot['clips']
     if not clips:raise ValueError('No source recordings.')
     c=controls(settings);r=rng_for(seed,'work');process=str(rng_for(seed,'work','process').choice(PROCESSES)) if rng_for(seed,'work','exploration').random()<c['structure_randomness'] else 'alternation'
@@ -137,9 +137,15 @@ def plan_composition(snapshot,seed,seconds,settings,context='open',family=None):
     p['replay']={'engine_ref':settings.get('engine_ref'),'engine_hash':digest({f.name:file_hash(f) for f in sorted((ROOT/'music').glob('*.py'))}),'numpy':np.__version__,'configuration':settings,'model_version':settings.get('model_version')}
     p['plan_id']=digest(p)
     from .development import arrange
+    if settings.get('development',{}).get('mode')=='story':
+        from .story import arrange as story
+        return story(p,snapshot,settings,analysis)
     return arrange(p,snapshot,settings)
 
 def affected_bounds(plan,changed):
+    # A level-calibrated, stateful master can respond to a local edit anywhere
+    # in the piece. Never promise a byte-identical region through that bus.
+    if plan.get('mastering') and changed:return [0,plan['duration']+3.]
     rows=[e for e in plan['events'] if e['event_id'] in changed]
     if not rows:return []
     lo=min(e['start'] for e in rows);hi=max(e['start']+e['duration']+e['space']['tail_seconds'] for e in rows)
@@ -219,11 +225,13 @@ def finish_mutation(parent,p,changed,action,snapshot,locked):
     # A return changes its responding events; a repeat creates a new event.
     # Audit those actual events instead of logging the unchanged target as changed.
     changes=[{'event':e['event_id'],'action':action,'before':copy.deepcopy(originals.get(e['event_id'])),'after':copy.deepcopy(e)} for e in p['events'] if e['event_id'] in changed]
+    if p.get('mastering')!=parent.get('mastering'):
+        changes.append({'parameter':'mastering','before':copy.deepcopy(parent.get('mastering')),'after':copy.deepcopy(p.get('mastering'))})
     if set(changed)&set(locked.get('events',[])):raise ValueError('The change would move a locked event.')
     for relation in locked.get('relations',[]):
         if set(relation)&set(changed):raise ValueError('The change would alter a locked relationship.')
     bounds=[b for b in (affected_bounds(parent,changed),affected_bounds(p,changed)) if b]
-    footprint=[min(b[0] for b in bounds),max(b[1] for b in bounds)] if bounds else [0,p['duration']]
+    footprint=[min(b[0] for b in bounds),max(b[1] for b in bounds)] if bounds else [0,p['duration']+(3. if p.get('mastering') else 0.)]
     for a,b in locked.get('regions',[]):
         if footprint[0]<b and footprint[1]>a:raise ValueError('The effect tail or bus dependency reaches a locked audio region.')
     if p.get('development'):

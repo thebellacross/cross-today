@@ -26,7 +26,9 @@ def generate(snapshot,cache,seed,seconds,settings,model=None,profile=None):
     profile=profile or {};settings=copy.deepcopy(settings);settings.setdefault('controls',{}).update(profile.get('rules',{}).get('controls',{}));settings['max_events']=profile.get('rules',{}).get('max_events',100)
     settings['development']=copy.deepcopy(profile.get('rules',{}).get('development',{'mode':'off'}))
     settings['model_version']={'id':model['id'] if model else None,'profile_id':profile.get('id'),'profile_revision':profile.get('revision',0)}
-    base=plan_composition(snapshot,seed,seconds,settings,context=profile.get('id','open'))
+    from .musical import materials
+    analysis=materials(snapshot,cache) if settings['development'].get('mode')=='story' else None
+    base=plan_composition(snapshot,seed,seconds,settings,context=profile.get('id','open'),analysis=analysis)
     from .preference import constrain
     constrain(base,profile.get('rules',{}))
     baseline=evaluate([base],snapshot,cache)[0]
@@ -52,7 +54,9 @@ def experiment(snapshot,cache,folder,request,settings,model=None,parent=None):
     folder=Path(folder);folder.mkdir(parents=True,exist_ok=True);seed=int(request['seed']);profile=request['profile'];g=copy.deepcopy(settings['generation']);g.setdefault('controls',{}).update(profile.get('rules',{}).get('controls',{}));g['max_events']=profile.get('rules',{}).get('max_events',100)
     g['development']=copy.deepcopy(profile.get('rules',{}).get('development',{'mode':'off'}))
     g['engine_ref']=settings['engine_ref'];g['model_version']={'id':model['id'] if model else None,'profile_id':profile['id'],'profile_revision':profile.get('revision',0)}
-    parent=parent or plan_composition(snapshot,seed,request.get('seconds',36),g,context=profile['id'])
+    from .musical import materials
+    analysis=materials(snapshot,cache) if parent is None and g['development'].get('mode')=='story' else None
+    parent=parent or plan_composition(snapshot,seed,request.get('seconds',36),g,context=profile['id'],analysis=analysis)
     parent=copy.deepcopy(parent);origin_id=parent.get('plan_id');parent.setdefault('origin_replay',copy.deepcopy(parent.get('replay')))
     # A new operation can require a newer renderer than the inherited source
     # plan. Preserve its origin while making the exported plan replayable with
@@ -102,10 +106,15 @@ def experiment(snapshot,cache,folder,request,settings,model=None,parent=None):
                 names[mode]=name
             stem_map[e['event_id']]=names
         audition={'range':[0,playback_end/p['sample_rate']],'padding_removed':max(0,(len(audio)-playback_end)/p['sample_rate']),'method':'one shared endpoint for every candidate; only exact zero suffix, 0.5 s retained; declared rests and nonzero tails protected; raw WAV unchanged'}
-        report.update(stems=stem_map,audition_gain=gain,audition=audition,audition_method='static broadband RMS match with shared peak ceiling; no compression; raw WAV retained',model=decision,source_snapshot=snapshot['id'])
+        report.update(stems=stem_map,audition_gain=gain,audition=audition,audition_method='static broadband RMS match with shared peak ceiling; no additional audition compression; saved master processing and raw WAV retained',model=decision,source_snapshot=snapshot['id'])
         save_json(folder/(prefix+'-report.json'),report)
         candidates.append({'id':row['id'],'family_id':p['family_id'],'parent_id':p.get('parent_id'),'prefix':prefix,'features':row['features'],'audio_hash':file_hash(folder/(prefix+'.wav')),'audition_hash':file_hash(folder/(prefix+'.mp3')),'snapshot':snapshot['id'],'duration':len(audio)/p['sample_rate'],'changes':p['decision_log'][-1] if p.get('parent_id') else {'origin':'frozen parent'},'audition_gain':gain,'audition':audition})
-    result={'runtime':{'python':__import__('platform').python_version(),'platform':__import__('platform').platform(),'numpy':np.__version__},'source_hashes':sorted(set(c['source_hash'] for c in snapshot['clips'])),'candidates':candidates,'decision':decision,'suggested':chosen,'snapshot':snapshot['id'],'engine_ref':settings['engine_ref'],'files':{p.name:{'sha256':file_hash(p),'bytes':p.stat().st_size} for p in folder.iterdir() if p.is_file()}}
+    # Retrying into an existing folder must not hash the previous result.json
+    # into its own replacement manifest or retain stale candidate artifacts.
+    declared={'snapshot.json',*stem_files.values()}
+    for c in candidates:
+        declared.update(c['prefix']+suffix for suffix in ('.wav','.mp3','-plan.json','-report.json'))
+    result={'runtime':{'python':__import__('platform').python_version(),'platform':__import__('platform').platform(),'numpy':np.__version__},'source_hashes':sorted(set(c['source_hash'] for c in snapshot['clips'])),'candidates':candidates,'decision':decision,'suggested':chosen,'snapshot':snapshot['id'],'engine_ref':settings['engine_ref'],'files':{name:{'sha256':file_hash(folder/name),'bytes':(folder/name).stat().st_size} for name in sorted(declared)}}
     save_json(folder/'result.json',result);return result
 
 def cloud_task(cloud,task_id):

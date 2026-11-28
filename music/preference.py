@@ -7,17 +7,20 @@ from .frequency import EXTRA_FEATURES,ANALYSIS_VERSION,pair_descriptors
 
 from .continuity import FEATURES as CONTINUITY_FEATURES,VERSION as ACTIVITY_VERSION,descriptors as continuity_descriptors
 
-VERSION='relational-bt-5'
+VERSION='relational-bt-6'
 STRENGTH_WEIGHTS={'normal':1.,'slight':.5}
 LEGACY_FEATURES=['density','rest','entry_spacing','return_spacing','development','duration_spread','foreground_share','role_contrast','band_overlap','pan_separation','tail_occupancy','processing','bit_damage','loop_share','stereo','motion','foreground_noise','conflict_foreground','dense_transients','return_contrast','space_with_overlap','change_with_noise']
 FREQUENCY_FEATURES=LEGACY_FEATURES+EXTRA_FEATURES
 from .development import FEATURES as DEVELOPMENT_FEATURES,VERSION as DEVELOPMENT_VERSION
 PREVIOUS_FEATURES=FREQUENCY_FEATURES+CONTINUITY_FEATURES
-FEATURES=PREVIOUS_FEATURES+DEVELOPMENT_FEATURES
-FEATURE_COUNTS=(len(LEGACY_FEATURES),len(FREQUENCY_FEATURES),len(PREVIOUS_FEATURES),len(FEATURES))
+from .musical import FEATURES as MUSICAL_FEATURES,VERSION as MUSICAL_VERSION
+from .story import ACTIONS as STORY_ACTIONS
+DEVELOPED_FEATURES=PREVIOUS_FEATURES+DEVELOPMENT_FEATURES
+FEATURES=DEVELOPED_FEATURES+MUSICAL_FEATURES
+FEATURE_COUNTS=(len(LEGACY_FEATURES),len(FREQUENCY_FEATURES),len(PREVIOUS_FEATURES),len(DEVELOPED_FEATURES),len(FEATURES))
 
 def available_features(report):
-    return len(FEATURES) if report.get('development_analysis',{}).get('version')==DEVELOPMENT_VERSION else len(PREVIOUS_FEATURES) if report.get("continuity",{}).get("version")==ACTIVITY_VERSION else len(FREQUENCY_FEATURES) if report.get("relation_analysis")==ANALYSIS_VERSION else len(LEGACY_FEATURES)
+    return len(FEATURES) if report.get('musical_analysis',{}).get('version')==MUSICAL_VERSION else len(DEVELOPED_FEATURES) if report.get('development_analysis',{}).get('version')==DEVELOPMENT_VERSION else len(PREVIOUS_FEATURES) if report.get("continuity",{}).get("version")==ACTIVITY_VERSION else len(FREQUENCY_FEATURES) if report.get("relation_analysis")==ANALYSIS_VERSION else len(LEGACY_FEATURES)
 DEVELOPMENT_ACTIONS=['focus-exchange','spectral-evolution','development-pace']
 ACTIONS=['delay-entry','earlier-entry','continue','withdraw','depth','space','processing','replace-material','repeat','return-later','swap-sections','frequency-shift','spectral-space','phrase-connect','bridge-gap','sustain-gap','handoff-gap']+DEVELOPMENT_ACTIONS
 
@@ -66,7 +69,8 @@ def vector(plan,report):
     values=[density,avg(np.array(active)==0),avg(intervals)/duration,avg(returns),development,float(np.std([e['duration']/duration for e in events])),sum(e['role']=='foreground' for e in events)/n,avg(contrast),overlap,avg(pans),tail,proc,bits,sum(e['technique'] in ('loop','hits') for e in events)/n,avg([f['side_ratio'] for f in features.values()]),avg([abs(e['pan']['end']-e['pan']['start']) for e in pe.values()]),noise,overlap*noise,avg(transients),avg(return_contrast),overlap*(tail+avg(pans)),development*noise]
     fine=[avg([p[i] for p in partials]) for i in range(5)]+[avg(correlations)]+[avg([p[i] for p in partials]) for i in (5,6)]
     development=report.get('development_analysis',{}).get('features',[0.]*len(DEVELOPMENT_FEATURES))
-    return np.clip(np.nan_to_num(values+fine+continuity_descriptors(report)+development),-4,4).tolist()
+    musical=report.get('musical_analysis',{}).get('features',[0.]*len(MUSICAL_FEATURES))
+    return np.clip(np.nan_to_num(values+fine+continuity_descriptors(report)+development+musical),-4,4).tolist()
 
 def padded(values):
     if len(values) not in FEATURE_COUNTS:raise ValueError('Unknown relation feature schema.')
@@ -112,7 +116,7 @@ def train(records,profile,revision,allow_simulated=False):
     model['id']=digest(model);return model
 
 def rank(candidates,model,allow_simulated=False):
-    compatible=not model or (model['algorithm']==VERSION and model['feature_names']==FEATURES) or (model['algorithm'] in ('relational-bt-3','relational-bt-4') and model['feature_names']==PREVIOUS_FEATURES) or (model['algorithm']=='relational-bt-2' and model['feature_names']==FREQUENCY_FEATURES) or (model['algorithm']=='relational-bt-1' and model['feature_names']==LEGACY_FEATURES)
+    compatible=not model or (model['algorithm']==VERSION and model['feature_names']==FEATURES) or (model['algorithm']=='relational-bt-5' and model['feature_names']==DEVELOPED_FEATURES) or (model['algorithm'] in ('relational-bt-3','relational-bt-4') and model['feature_names']==PREVIOUS_FEATURES) or (model['algorithm']=='relational-bt-2' and model['feature_names']==FREQUENCY_FEATURES) or (model['algorithm']=='relational-bt-1' and model['feature_names']==LEGACY_FEATURES)
     if model and (not compatible or (model.get('label_origin')!='human' and not allow_simulated)):raise ValueError('Incompatible or simulated personal model.')
     w=padded(model['weights']) if model else np.zeros(len(FEATURES));result=[];base=padded(candidates[0]['features'])
     for c in candidates:
@@ -145,7 +149,10 @@ def proposals(parent,snapshot,seed,locks=None,actions=None,limit=3,rules=None,ta
         automatic=ACTIONS if parent['controls']['structure_randomness'] else ['processing','space','frequency-shift','spectral-space']
         if (rules or {}).get('continuity',{}).get('mode')=='off':automatic=[a for a in automatic if a not in ('bridge-gap','phrase-connect','sustain-gap','handoff-gap')]
         actions=list(r.permutation(automatic))
-        if parent.get('development',{}).get('mode')=='evolving':
+        if parent.get('development',{}).get('mode')=='story':
+            automatic=STORY_ACTIONS if parent['controls']['structure_randomness'] else [a for a in STORY_ACTIONS if a not in ('more-dialogue','earlier-recollection')]
+            actions=list(r.permutation(automatic))+['spectral-evolution']
+        elif parent.get('development',{}).get('mode')=='evolving':
             actions=list(r.permutation(DEVELOPMENT_ACTIONS))+['spectral-space','frequency-shift','space','depth']
             if not parent['controls']['structure_randomness']:actions=['spectral-evolution','spectral-space','frequency-shift','space']
         elif parent['controls']['structure_randomness'] and (rules or {}).get('continuity',{}).get('mode')=='propose':
@@ -155,7 +162,10 @@ def proposals(parent,snapshot,seed,locks=None,actions=None,limit=3,rules=None,ta
     for action in actions:
         for target in list(r.permutation(targets)):
             try:
-                if action in DEVELOPMENT_ACTIONS:
+                if action in STORY_ACTIONS:
+                    from .story import change
+                    p=change(parent,action,target,seed,snapshot,locks)
+                elif action in DEVELOPMENT_ACTIONS:
                     from .development import change
                     p=change(parent,action,target,seed,snapshot,locks)
                 elif action in ('phrase-connect','bridge-gap','sustain-gap','handoff-gap'):
@@ -164,7 +174,7 @@ def proposals(parent,snapshot,seed,locks=None,actions=None,limit=3,rules=None,ta
                 else:p=mutate(parent,action,target,seed,snapshot,locks)
                 p=constrain(p,rules or {})
             except ValueError:continue
-            if p['events']==parent['events']:continue
+            if p['events']==parent['events'] and p.get('mastering')==parent.get('mastering'):continue
             rows.append(p);break
         if len(rows)>=limit:break
     return rows
@@ -194,5 +204,10 @@ def scoped_vector(plan,report,scope=None):
     if report.get('development_analysis'):
         from .development import describe
         r['development_analysis']=describe(p,r)
+    if report.get('musical_analysis'):
+        from .musical import describe
+        if r.get('mastering',{}).get('dynamics'):
+            r['mastering']['dynamics']=[{**v,'time':v['time']-lo} for v in r['mastering']['dynamics'] if lo<=v['time']<hi]
+        r['musical_analysis']=describe(p,r)
     v=vector(p,r);v[len(FREQUENCY_FEATURES):len(PREVIOUS_FEATURES)]=continuity_descriptors(report,lo,hi)
     return np.clip(v,-4,4).tolist()

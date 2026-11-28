@@ -1,4 +1,4 @@
-import './studio.js';
+import './studio.js?v=story-1';
 import {createSHA256} from './vendor/hash.js';
 const $=id=>document.getElementById(id),el=(tag,text='',cls='')=>{const x=document.createElement(tag);x.textContent=text;if(cls)x.className=cls;return x;};
 const message=text=>$('message').textContent=text;

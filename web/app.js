@@ -2,7 +2,7 @@ import {$,time,get,loadAlbum,artist,element,local} from './client.js';
 import {loadRecord,grooveProgress} from './record.js?v=scratch-1';
 import {recordView,reduced} from './record-boot.js?v=scratch-1';
 import {TrackPicker} from './track-picker.js';
-import {renderScore} from './score-view.js?v=collapsed-1';
+import {renderScore} from './score-view.js?v=story-1';
 import {ScratchAudio,SCRATCH_SECONDS_PER_TURN} from './scratch-audio.js';
 const audio=$('audio'),record=$('record');
 const scratch=new ScratchAudio(audio);

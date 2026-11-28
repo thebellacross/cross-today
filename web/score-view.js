@@ -37,7 +37,7 @@ export function renderScore(root,album,score) {
     }
     if(track.plan) {
       if(track.plan.development) {
-        details.append(element('p',{},`Development: ${track.plan.development.arc}. Voices persist across scenes; source read positions do not restart at section boundaries. Level, frequency and spatial trajectories are saved in the plan.`));
+        details.append(element('p',{},track.plan.development.mode==='story'?`Development: ${track.plan.development.arc}. Recorded phrases enter, answer, recede and return. Material ranges, tonal pairing evidence, level calibration and effect settings are saved in the plan.`:`Development: ${track.plan.development.arc}. Voices persist across scenes; source read positions do not restart at section boundaries. Level, frequency and spatial trajectories are saved in the plan.`));
         for(const section of track.plan.sections)details.append(element('p',{},`${time(section.start)}–${time(section.end)} · ${section.purpose} · planned foreground: ${track.plan.events.find(e=>e.event_id===section.foreground)?.source.name||'none'}`));
       }
       const download=element('button',{type:'button'},'Download composition plan');

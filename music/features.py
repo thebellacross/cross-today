@@ -1,7 +1,7 @@
 """Descriptive, time-resolved measurements. No descriptor is an aesthetic error."""
 import numpy as np
 
-def frames(audio, rate, hop_seconds=.25, fine=False):
+def frames(audio, rate, hop_seconds=.25, fine=False, musical=False):
     x=np.asarray(audio,float)
     if x.ndim==1:x=x[:,None]
     mono=x.mean(axis=1);hop=max(1,round(rate*hop_seconds));size=min(2048,max(32,len(x)))
@@ -18,6 +18,9 @@ def frames(audio, rate, hop_seconds=.25, fine=False):
         if fine:
             from .frequency import descriptors
             result[-1].update(descriptors(x[at:at+8192],rate))
+        if musical:
+            from .musical import pitch_frame
+            result[-1]['pitch']=pitch_frame(x[at:at+max(8192,round(rate*.52))],rate)
         previous=norm
     return result
 

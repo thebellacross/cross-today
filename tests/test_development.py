@@ -73,7 +73,7 @@ def test_old_model_projection_and_no_invented_temporal_evidence():
     assert rank(base,old)==rank(extended,old)
     record={'origin':'simulated','profile_id':'fixture','family_id':'fixture','choice':'A','features_A':extended[0]['features'],'features_B':extended[1]['features'],'available_features_A':36,'available_features_B':36}
     model=train([record],'fixture',1,allow_simulated=True)
-    assert model['weights'][36:]==[0.]*8 and model['observed_feature_counts'][36:]==[0]*8
+    assert model['weights'][36:]==[0.]*(len(FEATURES)-36) and model['observed_feature_counts'][36:]==[0]*(len(FEATURES)-36)
     model=train([{**record,'available_features_A':44,'available_features_B':44}],'fixture',2,allow_simulated=True)
     assert any(model['weights'][36:])
 

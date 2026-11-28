@@ -56,7 +56,7 @@ def operation(x,p):
         peak=max(1e-9,float(np.max(np.abs(y))));y*=min(1.,max(.02,float(np.max(np.abs(x))))/peak)
     return y
 
-def render_event(e,clips,cache,sr,processed=True):
+def render_event(e,clips,cache,sr,processed=True,audit=None):
     clip=clips[e['source_id']];x,rate=read_clip(Path(cache)/clip['cache_file'],native=True)
     if rate!=sr:raise ValueError('Plan/cache rate mismatch.')
     x=stereo(x)
@@ -98,6 +98,13 @@ def render_event(e,clips,cache,sr,processed=True):
         v,_=signal(rng_for(p['control_seed']),n,kind='files',feed=np.clip(x*32767,-32768,32767).astype('<i2').tobytes());y=(1-p['wet'])*dry+p['wet']*stereo(v)*max(.01,float(np.sqrt(np.mean(x*x))))
     if processed=='input' or not processed:return input_audio
     for op in p['operations']:y=frequency_process(y,op,sr) if op['kind'] in OPERATION_SUPPORT else operation(y,op)
+    if e.get('effects'):
+        from .mixing import insert_effects
+        y=insert_effects(y,sr,e['effects'])
+    if e.get('mixing'):
+        from .mixing import gain_stage
+        y,calibration=gain_stage(y,sr,e['mixing'])
+        if audit is not None:audit['level_calibration']=calibration
     automation=e.get('automation')
     if automation:y=colour(y,sr,automation)
     attack=min(len(y)//2,round(e['envelope']['attack']*sr));release=min(len(y)//2,round(e['envelope']['release']*sr))
@@ -124,6 +131,9 @@ def render_event(e,clips,cache,sr,processed=True):
             if length<=0:break
             send=wet[:length] if isinstance(wet,np.ndarray) else wet
             out[at:at+length]+=source[:length,::-1 if tap%2 else 1]*send*np.exp(-3*at/sr/decay)
+    if e.get('effects'):
+        from .mixing import sends
+        out=sends(y,sr,e['effects'],e['space']['tail_seconds'])
     return out*e['gain']
 
 def render_plan(plan,snapshot,cache,stems=False):
@@ -139,26 +149,42 @@ def render_plan(plan,snapshot,cache,stems=False):
     sr=plan['sample_rate'];length=round((plan['duration']+3.)*sr);mix=np.zeros((length,2));reports=[];saved={};material_activity={}
     # Stable summation order is part of replay. Adding an event never rerolls others.
     for lane,e in enumerate(sorted(plan['events'],key=lambda e:e['event_id'])):
-        y=render_event(e,clips,cache,sr);start=round(e['start']*sr);size=min(len(y),length-start)
+        clip=clips[e['source_id']]
+        audit={};y=render_event(e,clips,cache,sr,audit=audit);start=round(e['start']*sr);size=min(len(y),length-start)
         if size<=0:continue
-        mix[start:start+size]+=y[:size];measure=frames(y[:size],sr,fine=True)
+        mix[start:start+size]+=y[:size];measure=frames(y[:size],sr,fine=True,musical=True)
         if stems:saved[e['event_id']]=y[:size]
         if e['source_id'] not in material_activity:
             raw,_=read_clip(Path(cache)/clips[e['source_id']]['cache_file'],native=True);material_activity[e['source_id']]=activity(raw,sr)
-        reports.append({'event_id':e['event_id'],'section_id':e['section_id'],'start':e['start'],'duration':e['duration'],'tail_seconds':max(0,size/sr-e['duration']),'active_until':(start+size)/sr,'lane':lane,'role':e['role'],'action':e['action'],'relation_to':e['relation_to'],
+        reports.append({**audit,'effects':e.get('effects',{}),'event_id':e['event_id'],'section_id':e['section_id'],'start':e['start'],'duration':e['duration'],'tail_seconds':max(0,size/sr-e['duration']),'active_until':(start+size)/sr,'lane':lane,'role':e['role'],'action':e['action'],'relation_to':e['relation_to'],
             'name':e['source']['name'],'tags':e['source']['tags'],'source_hash':e['source_hash'],'clip_id':e['source_id'],'segment_start':e['source']['start_frame']/sr,'segment_end':e['source']['end_frame']/sr,'source_preparation':clip.get('preparation'),'source_time_domain':'prepared' if clip.get('preparation') else 'original','technique':e['transform']['technique'],
             'gain':e['gain'],'pan':e['pan'],'automation':e.get('automation'),'motif_id':e.get('motif_id'),'source_offset_frame':e['transform']['offset_frame'],'speed':1+e['transform']['phase_creep'] if e['transform']['technique'] in ('loop','hits') else e['transform']['speed'],
             'operations':[o['kind'] for o in e['transform']['operations']],'data_family':'seeded control','channel_policy':SUPPORT[e['transform']['technique']], 'processed_features':summary(measure),'feature_frames':measure,'stem_hash':hashlib_array(y[:size]),'activity':activity(y[:size],sr),'input_activity':activity(render_event(e,clips,cache,sr,'input'),sr)})
+        if plan.get('development',{}).get('mode')=='story':
+            window=e['transform']['read_window']
+            reports[-1].update(segment_start=(e['source']['start_frame']+window['start_frame'])/sr,
+                               segment_end=(e['source']['start_frame']+window['end_frame'])/sr,
+                               source_range=e['source_range'])
     for b in plan['buses']:
         a=max(0,round(b['start']*sr));z=min(length,round(b['end']*sr));phase=float(rng_for(b['operation_seed']).uniform(0,2*np.pi));gate=(np.sin(np.arange(z-a)/sr*2*np.pi/b['period']+phase)>0).astype(float);mix[a:z]*=(1-b['wet']+b['wet']*gate)[:,None]
     mix*=plan['master_gain'];end=plan['ending'];n=min(length,round(end['seconds']*sr))
     if end['kind']=='fade':mix[-n:]*=np.linspace(1,0,n)[:,None]
     elif end['kind']=='tape-stop':
         pos=np.cumsum(np.linspace(1,.02,n));pos*=(n-1)/max(1,pos[-1]);mix[-n:]=read_at(mix[-n:],pos)*np.linspace(1,0,n)[:,None]
-    clipped=int(np.sum(np.abs(mix)>1));mix=np.clip(mix,-1,1)
+    mastering=None
+    if plan.get('mastering'):
+        from .mixing import master
+        mix,mastering=master(mix,sr,plan['mastering'])
+        clipped=0
+        if np.max(np.abs(mix))>1:raise ValueError('Master protection failed; refusing clipped delivery.')
+    else:
+        clipped=int(np.sum(np.abs(mix)>1));mix=np.clip(mix,-1,1)
     report={'plan_id':plan['plan_id'],'family_id':plan['family_id'],'form':plan['form'],'process':plan['process'],'lanes':len(reports),'sections':plan['sections'],'events':reports,'bends':plan['buses'],'plan':plan,'duration':length/sr,'clipped_samples':clipped,'mix_features':summary(frames(mix,sr)),'relation_analysis':ANALYSIS_VERSION}
     report['continuity']=diagnose(mix,sr,plan,reports);report['material_activity']=material_activity
     report['development_analysis']=describe(plan,report)
+    from .musical import describe as musical_describe
+    if mastering:report['mastering']=mastering
+    report['musical_analysis']=musical_describe(plan,report)
     return mix,report,saved
 
 def hashlib_array(x):

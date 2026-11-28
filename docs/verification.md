@@ -1,12 +1,13 @@
 # 验证记录
 
+2026-11-28 更新：管理网页与自动登录快捷入口已按用户要求撤下。以下管理界面验收为历史记录；当前通过 Codex 对话由助手完成操作，用户只需提供试听判断。自动音乐网站、受保护 API 与既有数据保留。
+
 2026-11-18，Asia/Shanghai。网站、受保护管理页、私有素材同步、真实云端渲染及发布已上线。
 已完成三天真实云端生成、公开播放、失败恢复及旧专辑清理后的永久精选验收。原生 Safari 和 iPhone 硬件测试范围另列于下文。
 
 ## 正式入口
 
 - [CROSS 网站](https://thebellacross.github.io/cross-today/)
-- [受保护管理入口](https://cross-today.thebellacross.workers.dev/admin)
 - [代码与 Actions](https://github.com/thebellacross/cross-today)
 - 集中配置：`config.json`。日常保存的音乐参数、素材标签与精选备注由服务端持久保存。
 

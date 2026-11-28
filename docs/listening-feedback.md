@@ -1,4 +1,6 @@
-# CROSS 听后反馈
+# CROSS 听后反馈：内部技术记录
+
+**当前交互约定（2026-11-28）**：所有使用、试听、听感判断和改进在 Codex 对话中进行。助手准备可播放音频，用户直接回复，助手负责保存真实反馈、训练及验证。管理网页和自动登录入口已撤下；以下曾提及的界面操作只保留为历史实现记录，不再作为用户操作要求，也不要让用户阅读本文才能使用。原有服务、音频、反馈与模型保留。当前 Composition Review 试听按用户选择仅留本地。
 
 ## 2026-11-28：乐句叙事、音乐音级与混音（engine-v19）
 
@@ -21,9 +23,9 @@
 
 实现参考：[FFmpeg compressor](https://ffmpeg.org/ffmpeg-filters.html#acompressor)、[lookahead limiter](https://ffmpeg.org/ffmpeg-filters.html#alimiter)、[音级分布方法说明](https://essentia.upf.edu/reference/std_HPCP.html)。音级分析为本项目 NumPy 实现，不调用 Essentia，也不声称和弦或调性识别准确率。
 
-管理入口：https://cross-today.thebellacross.workers.dev/admin 。仍使用本项目的受保护登录，Mac 上双击 **Open Admin.command**。原来的素材、每日发行、唱片、Selected 和 Bandcamp 导出继续使用。
+内部认证 API 供助手维护素材、每日发行、Selected 和导出；不提供用户管理网页，不要求用户登录。
 
-## 实际操作
+## 历史界面流程（已撤下，不再要求用户操作）
 
 1. 在“听后反馈 · 关系实验”选一个档案。不同作品意图可建立不同档案，避免把相反的喜好平均掉。
 2. 展开素材列表，明确勾选这次实验的材料，再生成私有试听。云端排队、渲染、失败和完成状态都会保留。

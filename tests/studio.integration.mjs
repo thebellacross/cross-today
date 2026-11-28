@@ -1,9 +1,8 @@
 // All choices in this file are SIMULATED in an isolated local Durable Object.
 // Nothing is submitted to the owner's deployed service or real preference history.
 import {Miniflare,convertV4MiniflareOptions} from 'miniflare';
-import {chromium,webkit,devices} from 'playwright';
 import assert from 'node:assert/strict';
-import {readFileSync,mkdirSync,writeFileSync} from 'node:fs';
+import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 import {spawnSync} from 'node:child_process';
 import {githubFixture} from './github-fixture.mjs';
@@ -16,7 +15,6 @@ async function retain(id,files){
  const release=await (await github.fetch(new Request('https://api.github.com/repos/thebellacross/private-fixture/releases',{method:'POST',headers,body:JSON.stringify({tag_name:'lab-'+id,draft:false})}))).json();const metas={};
  for(const [name,data]of Object.entries(files)){const asset=await (await github.fetch(new Request(`https://uploads.github.com/repos/thebellacross/private-fixture/releases/${release.id}/assets?name=${name}`,{method:'POST',headers,body:data}))).json();const meta={sha256:createHash('sha256').update(data).digest('hex'),bytes:data.length};await get('/internal/storage/register','POST',{key:`lab/${id}/${name}`,id:asset.id,...meta},'run');metas[name]=meta;}return metas;
 }
-let browser;
 try{
  assert.equal((await mf.dispatchFetch('https://example.test/api/studio/state')).status,401);
  const data=readFileSync('C_SoundSource/Snaredrum.wav'),hash=createHash('sha256').update(data).digest('hex');
@@ -65,15 +63,21 @@ try{
  await get('/api/studio/profiles/open','PUT',{revision:storyProfile.revision,rules:restored.rules});
  const limited=await get('/api/studio/render','POST',{request_id:'rate-limit-fixture',profile_id:'open',source_hashes:[hash]});await get(`/internal/studio/tasks/${limited.id}/claim`,'POST',{run:'limited'},'run');await get(`/internal/studio/tasks/${limited.id}/failed`,'POST',{run:'limited',reason:'Storage temporarily limited',retry_after:1800},'run');
  state=await get('/api/studio/state');const waiting=state.tasks.find(t=>t.id===limited.id);assert.match(waiting.error,/免费存储/);assert.ok(waiting.retry_after>Date.now()+29*60000);assert.equal(waiting.status,'failed');
- const url=await mf.ready;mkdirSync('.state/qa-studio',{recursive:true});
- for(const [name,type,options]of [['chrome',chromium,{viewport:{width:1440,height:1100}}],['webkit-mobile',webkit,{...devices['iPhone 13']}]]){
-   browser=await type.launch({headless:true,...(name==='chrome'?{channel:'chrome'}:{})});const ctx=await browser.newContext({...options,extraHTTPHeaders:{Authorization:'Bearer test-only-admin'}}),page=await ctx.newPage();const errors=[];page.on('pageerror',e=>errors.push(e.message));await page.goto(new URL('/admin',url).href);await page.locator('#studio-tasks button').filter({hasText:'打开试听'}).last().click();await page.locator('#event-targets .studio-event').first().waitFor();
-   await page.locator('#compare-A').evaluate(a=>{a.volume=0;return a.play();});await page.waitForFunction(()=>document.querySelector('#compare-A').currentTime>.15);await page.locator('#compare-A').evaluate(a=>a.pause());
-   assert.equal(await page.locator('#material-preparation').inputValue(),'remove-digital-silence');assert.equal(await page.locator('#material-gap').inputValue(),'1');assert.equal(await page.locator('#mutation option[value=handoff-gap]').count(),1);await page.locator('#feedback-strength').selectOption('slight');assert.equal(await page.locator('#feedback-strength').inputValue(),'slight');assert.equal(await page.locator('#mutation option[value=phrase-connect]').count(),1);assert.equal(await page.locator('#taste-brief').inputValue(),'SIMULATED private direction, not a label');assert.equal(await page.locator('#event-targets .studio-event').count(),6);assert.equal(await page.locator('#mutation option[value=frequency-shift]').count(),1);assert.equal(await page.locator('[data-taste-choice=similar]').count(),1);assert.equal(await page.locator('#studio-mix').evaluate(a=>a.error),null);if(process.env.STUDIO_FIXTURE){assert.ok(await page.locator('#continuity-diagnostic button').count()>0);}
-   assert.match(await page.locator('#locked-regions').innerText(),/23.00–24.00/);assert.equal(await page.locator('#event-targets label').filter({hasText:'保留事件'}).locator('input:checked').count(),1);
-   await page.locator('#scope-start').fill(name==='chrome'?'1':'3');await page.locator('#scope-end').fill(name==='chrome'?'2':'4');await page.locator('#lock-region').check();await page.locator('#save-locks').click();await page.waitForFunction(()=>document.querySelector('#studio-message').textContent.includes('保留条件已保存'));
-   const kept=(await get('/api/studio/state')).locks.find(v=>v.task===t.id&&v.candidate===fixture.candidates[0].id);assert.ok(kept.locks.regions.some(r=>r[0]===23&&r[1]===24));assert.ok(kept.locks.regions.length>=2);
-   await page.locator('#event-targets input[type=checkbox]').nth(1).check();await page.screenshot({path:'.state/qa-studio/'+name+'.png',fullPage:true});const width=await page.evaluate(()=>({w:innerWidth,scroll:document.documentElement.scrollWidth}));if(width.scroll>width.w+1)console.log(await page.evaluate(()=>[...document.querySelectorAll('body *')].filter(e=>e.getBoundingClientRect().right>innerWidth+1||e.scrollWidth>e.clientWidth+2).map(e=>[e.id,e.tagName,e.clientWidth,e.scrollWidth,e.getBoundingClientRect().right]).slice(0,30)));assert.ok(width.scroll<=width.w+1,JSON.stringify(width));assert.deepEqual(errors,[]);await browser.close();browser=null;
+ // The owner never needs a browser dashboard. Former UI routes redirect to the music site;
+ // the assistant's authenticated feedback and preservation APIs still work.
+ const site=JSON.parse(readFileSync('config.json')).site_url;
+ for(const path of ['/', '/admin', '/admin/', '/admin.html']){
+  const response=await mf.dispatchFetch('https://example.test'+path,{redirect:'manual'});
+  assert.equal(response.status,302);assert.equal(response.headers.get('Location'),site);
+  assert.equal(response.headers.get('Cache-Control'),'no-store');
  }
- console.log('PASS: isolated simulated labels; protected private audio/Range, immutable comparisons, task dedup/leases, actual Python training, model-to-daily snapshot, correction/CAS/revocation/rollback, no forced labels, Chrome and WebKit mobile listening interface.');
-}finally{if(browser)await browser.close();await mf.dispose();}
+ for(const path of ['/admin.js','/admin.css','/studio.js'])assert.equal((await mf.dispatchFetch('https://example.test'+path)).status,404);
+ const plan=JSON.parse(readFileSync(fixtureDir+'/c0-plan.json'));
+ const locks={...plan.locks,regions:[...plan.locks.regions,[1,2]]};
+ const saved=await get('/api/studio/locks','PUT',{task:t.id,candidate:fixture.candidates[0].id,revision:0,locks});
+ assert.deepEqual(saved.locks,locks);
+ assert.equal((await call('/api/studio/locks','PUT',{task:t.id,candidate:fixture.candidates[0].id,revision:0,locks})).status,409);
+ const kept=(await get('/api/studio/state')).locks.find(v=>v.task===t.id&&v.candidate===fixture.candidates[0].id);
+ assert.deepEqual(kept.locks,locks);
+ console.log('PASS: retired dashboard routes; authenticated private audio/Range, immutable comparisons, actual Python training, model-to-daily snapshot, correction/CAS/revocation/rollback, neutral feedback and protected regions through internal APIs. All labels and storage were isolated local fixtures.');
+}finally{await mf.dispose();}

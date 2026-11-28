@@ -72,8 +72,9 @@ export default {
         if(!await same(request.headers.get('Authorization')?.replace(/^Bearer /,''),env.RUN_TOKEN))return json({error:'Forbidden'},403);
         return stub.fetch(request);
       }
-      if(path==='/'||path==='/admin')url.pathname='/admin.html';
-      if(!['/admin.html','/admin.js','/admin.css','/studio.js','/artist.json','/vendor/hash.js'].includes(url.pathname)&&!url.pathname.startsWith('/assets/artist/'))return new Response('Not found',{status:404});
+      // The owner manages this project through conversation; there is no dashboard.
+      if(['/', '/admin', '/admin/', '/admin.html'].includes(path))return new Response(null,{status:302,headers:{Location:defaults.site_url,'Cache-Control':'no-store'}});
+      if(path!=='/artist.json'&&!path.startsWith('/assets/artist/'))return new Response('Not found',{status:404});
       return secured(await env.ASSETS.fetch(new Request(url,request)));
     } catch (error) { return json({error:error.publicMessage||'The service could not complete this request. Previous published audio is unchanged.'},error.status||500,error.retryAfter?{'Retry-After':String(error.retryAfter)}:{}); }
   },

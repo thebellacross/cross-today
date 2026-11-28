@@ -102,7 +102,7 @@ def main():
     run(wrangler+['secret','bulk','--config','worker/wrangler.jsonc'],secret=json.dumps({**values,'GITHUB_TOKEN':token,'STORAGE_REPOSITORY':storage_repo}))
     if not (ROOT/'.git').exists():run(['git','init','-b','main'])
     run(['git','config','user.name',profile['login']]);run(['git','config','user.email',f'{profile["id"]}+{profile["login"]}@users.noreply.github.com'])
-    run(['git','add','.gitignore','.github','music','scripts','web','worker','tests','docs','config.json','requirements.txt','package.json','package-lock.json','README.md','THIRD_PARTY.md','Start Preview.command','Open Admin.command','Sync Sounds.command'])
+    run(['git','add','.gitignore','.github','music','scripts','web','worker','tests','docs','config.json','requirements.txt','package.json','package-lock.json','README.md','AGENTS.md','THIRD_PARTY.md','Start Preview.command','Sync Sounds.command'])
     staged=run(['git','diff','--cached','--name-only']).stdout.splitlines()
     forbidden=('.secrets/','.state/','.cache/','.reference/','.tools/','C_SoundSource/','Prepared Sounds/','output/')
     if any(p.startswith(forbidden) for p in staged):raise RuntimeError('Private-file publication guard blocked the commit.')
@@ -128,7 +128,7 @@ def main():
         print('Waiting for the active coordinator to adopt the deployed version.',flush=True);time.sleep(15)
     if api('/repos/'+repo+'/pages',allow=[404]) is None:api('/repos/'+repo+'/pages','POST',{'build_type':'workflow'})
     api('/repos/'+repo+'/actions/workflows/pages.yml/dispatches','POST',{'ref':'main'})
-    save_json(ROOT/'.state/deployment.json',{'worker':worker,'admin':worker+'/admin','site':cfg['site_url'],'repository':'https://github.com/'+repo,'backend':'github-free','state':'Pages deployment dispatched; cloud audio validation remains required'})
-    print('Worker: '+worker);print('Admin: '+worker+'/admin');print('Repository: https://github.com/'+repo);print('Pages deployment dispatched. Next: verify the live site, synchronize materials and complete cloud generation.')
+    save_json(ROOT/'.state/deployment.json',{'worker':worker,'site':cfg['site_url'],'repository':'https://github.com/'+repo,'backend':'github-free','interaction':'conversation','state':'Pages deployment dispatched; cloud audio validation remains required'})
+    print('Worker: '+worker);print('Repository: https://github.com/'+repo);print('Pages deployment dispatched. Next: verify the live site, synchronize materials and complete cloud generation.')
 
 if __name__=='__main__':main()
